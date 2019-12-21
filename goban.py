@@ -25,7 +25,7 @@ class Stone(go.Stone):
     def __init__(self, board, point, color):
         """Create, initialize and draw a stone."""
         super(Stone, self).__init__(board, point, color)
-        self.coords = (5 + self.point[0] * 40, 5 + self.point[1] * 40)
+        self.coords = (45 + self.point[0] * 40, 45 + self.point[1] * 40)
         self.draw()
 
     def draw(self):
@@ -81,13 +81,17 @@ class Board(go.Board):
         all the 'old' groups should be updated before the newly added one.
 
         """
+        is_suicide_kill = False
         for group in self.groups:
             if added_stone:
                 if group == added_stone.group:
                     continue
-            group.update_liberties()
+            liberties = group.update_liberties()
+            is_suicide_kill = (liberties == 0)
         if added_stone:
-            added_stone.group.update_liberties()
+            is_suicide = (added_stone.group.update_liberties() == 0)
+            if is_suicide and not is_suicide_kill:
+                self.turn()
 
 
 def main():
@@ -98,8 +102,9 @@ def main():
                 exit()
             if event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1 and board.outline.collidepoint(event.pos):
-                    x = int(round(((event.pos[0] - 5) / 40.0), 0))
-                    y = int(round(((event.pos[1] - 5) / 40.0), 0))
+                    x = int(round(((event.pos[0] - 45) / 40.0), 0))
+                    y = int(round(((event.pos[1] - 45) / 40.0), 0))
+                    #print(x, y)
                     stone = board.search(point=(x, y))
                     if stone:
                         stone.remove()

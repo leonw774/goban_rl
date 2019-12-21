@@ -46,7 +46,7 @@ class Stone(object):
                        (self.point[0], self.point[1] - 1),
                        (self.point[0], self.point[1] + 1)]
         for point in neighboring:
-            if not 0 < point[0] < 20 or not 0 < point[1] < 20:
+            if not (0 <= point[0] < 19) or not (0 <= point[1] < 19):
                 neighboring.remove(point)
         return neighboring
 
@@ -78,7 +78,7 @@ class Stone(object):
 
     def __str__(self):
         """Return the location of the stone, e.g. 'D17'."""
-        return 'ABCDEFGHJKLMNOPQRST'[self.point[0]-1] + str(20-(self.point[1]))
+        return 'ABCDEFGHJKLMNOPQRST'[self.point[0]] + str(19-(self.point[1]))
 
 
 class Group(object):
@@ -121,7 +121,7 @@ class Group(object):
 
     def update_liberties(self):
         """Update the group's liberties.
-
+        Return the group's liberties, 0 if removed
         As this method will remove the entire group if no liberties can
         be found, it should only be called once per turn.
 
@@ -133,6 +133,8 @@ class Group(object):
         self.liberties = set(liberties)
         if len(self.liberties) == 0:
             self.remove()
+            return 0
+        return len(self.liberties)
 
     def __str__(self):
         """Return a list of the group's stones as a string."""
