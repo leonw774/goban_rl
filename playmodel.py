@@ -1,18 +1,17 @@
 import numpy as np
 from keras import backend as K
 from keras import optimizers
-from keras.models import Model
+from keras.models import Model, load_model
 #from keras.layers import Activation, BatchNormalization, Concatenate, Conv2D, Dense, Dropout, Flatten, LeakyReLU, MaxPooling2D
 from keras.layers import Activation, BatchNormalization, Concatenate, Conv2D, Dense, Dropout, Flatten, Input
 
-GAMMA = 0.987
+GAMMA = 0.996
 
 STEP_QUEUE_MAX_LENGTH = 10
 
 TRAIN_EPOCHS = 2
 TRAIN_EPOCHS_THRESHOLD = 2
-BATCH_SIZE = 32
-BATCH_INTERVAL = 16
+BATCH_SIZE = 16
 
 A_LEARNING_RATE = 10e-4
 A_LEARNING_RATE_DECAY = 0.0
@@ -55,14 +54,14 @@ class StepRecord() :
         
 
 class ActorCritic :
-    def __init__ (self, load_weight_name="") :    
+    def __init__ (self, load_model_name="") :    
         self.actor = None
         self.critic = None
         self.step_records = [StepRecord()]
         
-        if load_weight_name :
-            self.actor.load_weights("actor_" + load_weight_name)
-            self.critic.load_weights("critic_" + load_weight_name)
+        if load_model_name:
+            self.actor = load_model("actor_" + load_model_name)
+            self.critic = load_model("critic_" + load_model_name)
         else :
             self.actor = self.init_actor()
             self.critic = self.init_critic()
@@ -71,18 +70,18 @@ class ActorCritic :
         self.actor.compile(loss = "categorical_crossentropy", optimizer = self.actor_optimizer)
 
         self.critic_optimizer = optimizers.rmsprop(lr = C_LEARNING_RATE, decay = C_LEARNING_RATE_DECAY)
-        self.critic.compile(loss = "binary_crossentropy", optimizer = self.critic_optimizer)
+        self.critic.compile(loss = "mse", optimizer = self.critic_optimizer)
         
     def init_actor(self) :
         input_map = Input((19, 19, 2))
         x1 = Conv2D(16, (7, 7), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
         x1 = Conv2D(32, (3, 3), activation = "relu")(x1)
         
-        x2 = Conv2D(8, (11, 11), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
-        x2 = Conv2D(16, (3, 3), activation = "relu")(x2)
+        x2 = Conv2D(12, (11, 11), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
+        x2 = Conv2D(24, (3, 3), activation = "relu")(x2)
         
-        x3 = Conv2D(4, (15, 15), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
-        x3 = Conv2D(8, (3, 3), activation = "relu")(x3)
+        x3 = Conv2D(8, (15, 15), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
+        x3 = Conv2D(16, (3, 3), activation = "relu")(x3)
         
         x1 = Flatten()(x1)
         x2 = Flatten()(x2)
@@ -99,11 +98,11 @@ class ActorCritic :
         x1 = Conv2D(16, (7, 7), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
         x1 = Conv2D(32, (3, 3), activation = "relu")(x1)
         
-        x2 = Conv2D(8, (11, 11), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
-        x2 = Conv2D(16, (3, 3), activation = "relu")(x2)
+        x2 = Conv2D(12, (11, 11), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
+        x2 = Conv2D(24, (3, 3), activation = "relu")(x2)
         
-        x3 = Conv2D(4, (15, 15), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
-        x3 = Conv2D(8, (3, 3), activation = "relu")(x3)
+        x3 = Conv2D(8, (15, 15), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
+        x3 = Conv2D(16, (3, 3), activation = "relu")(x3)
         
         x1 = Flatten()(x1)
         x2 = Flatten()(x2)
@@ -115,17 +114,24 @@ class ActorCritic :
         #model.summary()
         return model
         
-    def decide(self, cur_map, temperature = 1.0) :
+    def decide(self, cur_map, temperature=1.0, test=False) :
         EPS = 10e-8
         preds = np.squeeze(self.actor.predict(np.expand_dims(cur_map, axis=0)))
         # delete illegal moves
         has_stone_id = np.argwhere(np.max(cur_map, axis=2) == 1)
         preds[has_stone_id] = 0
-        # softmax again
-        exp_preds = np.exp((preds + EPS) / temperature)
-        preds = exp_preds/np.sum(exp_preds)
-        act = np.argmax(np.random.multinomial(1, preds, 1))
-        return act%19, act//19, preds[act]
+        if test:
+            values = np.squeeze(self.critic.predict(np.expand_dims(cur_map, axis=0)))
+            preds_values = values * preds
+            preds_values[has_stone_id] = 0
+            act = np.argmax(preds_values)
+            return act%19, act//19, values[act]
+        else:
+            # softmax again
+            exp_preds = np.exp((preds + EPS) / temperature)
+            preds = exp_preds/np.sum(exp_preds)
+            act = np.argmax(np.random.multinomial(1, preds, 1))
+            return act%19, act//19, preds[act]
     
     def record(self, point, old_map, new_map, reward, is_terminal):
         self.step_records[-1].add(point[0]+point[1]*19, old_map, new_map, reward, is_terminal)
@@ -160,8 +166,8 @@ class ActorCritic :
             for i in range(train_length):
                 advantages[i, rec_a[i]] = new_r[i, rec_a[i]] - old_r[i, rec_a[i]]
             #print("advantages:", advantages)
-            closs += self.critic.fit(rec_os, new_r, verbose=0).history["loss"][0]
-            aloss += self.actor.fit(rec_os, advantages, verbose=0).history["loss"][0]
+            closs += self.critic.fit(rec_os, new_r, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
+            aloss += self.actor.fit(rec_os, advantages, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
         closs /= TRAIN_EPOCHS
         aloss /= TRAIN_EPOCHS
         print("avgcloss: %.3e, avgaloss: %.3e"%(closs, aloss))
