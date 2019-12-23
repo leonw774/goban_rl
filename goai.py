@@ -29,19 +29,20 @@ BOARD_SIZE = (410, 410)
 parser = argparse.ArgumentParser()
 parser.add_argument("--epochs", default=100, type=int)
 parser.add_argument("--usemodel", type=str, default="", action="store")
-parser.add_argument("--onlytest", action="store_true")
+parser.add_argument("--onlytest", type=str, default="", action="store")
 args = parser.parse_args()
 EPOCHS = args.epochs
-TEST_ONLY = (args.onlytest)
+TEST_ONLY = (args.onlytest == "b" or args.onlytest == "w")
 
 MAX_STEP = 540
+MAX_TRY_STEP = 630
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 
 WIN_REWARD = 1
-UNKNOWN_REWARD = 0.5
-LOSE_REWARD = 0
+UNKNOWN_REWARD = 0
+LOSE_REWARD = -1
 KOMI = 6.5
 
 class Stone(go.Stone):
@@ -211,7 +212,7 @@ class Board(go.Board):
         pygame.display.update()
 
 def train():
-    TEMPERATURE = 2.0
+    TEMPERATURE = 10.0
     MIN_TEMPERATURE = 0.1
     TEMPERATURE_DECAY = (MIN_TEMPERATURE/TEMPERATURE) ** (2/(3*EPOCHS))
     for epoch in range(EPOCHS*2):
@@ -221,22 +222,24 @@ def train():
         print("epoch", epoch)
         steps = 0
         while (steps < MAX_STEP):
-            old_map = board.map
-            x, y, prob = model.decide(old_map, TEMPERATURE)
-            # if is already a stone
-            if board.search(point=(x, y)) != []:
-                continue
-            added_stone = Stone(board, (x, y), board.turn())
-            # if is suicide
-            if board.update_liberties(added_stone) == "Suicide":
-                continue
+            try_steps = 0
+            while (try_steps < MAX_STEP - steps):
+                old_map = board.map
+                x, y, cor = model.decide(old_map, TEMPERATURE)
+                try_steps += 1
+                # if is already a stone
+                if board.search(point=(x, y)) != []:
+                    continue
+                added_stone = Stone(board, (x, y), board.turn())
+                # if is suicide
+                if board.update_liberties(added_stone) != "Suicide":
+                    break
             winner = board.is_gameover()
             if winner:
-                reward = WIN_REWARD if winner == train_as else LOSE_REWARD
                 model.record(point=(x, y),
                              old_map = old_map,
                              new_map = board.map,
-                             reward = reward,
+                             reward = WIN_REWARD if winner == train_as else LOSE_REWARD,
                              is_terminal = True)
                 print("winner:", winner)
                 break
@@ -263,11 +266,12 @@ def train():
             TEMPERATURE = max(MIN_TEMPERATURE, TEMPERATURE*TEMPERATURE_DECAY)
 
 def test(ai_play_as):
+    print("begin test")
     while True:
         pygame.time.wait(250)
         if ai_play_as == board.next:
-            x, y, prob = model.decide(board.map, 0.1)
-            print("model choose (%d, %d) for prob: %.4e"%(x, y, prob))
+            x, y, cor = model.decide(board.map, 0.01)
+            print("model choose (%d, %d) for: %.4e"%(x, y, cor))
             if board.search(point=(x, y)) != []:
                 continue
             added_stone = Stone(board, (x, y), board.turn())
@@ -290,11 +294,12 @@ def test(ai_play_as):
 
 if __name__ == '__main__':
     pygame.init()
-    pygame.display.set_caption('Goban')
+    pygame.display.set_caption('Go-Ai')
     screen = pygame.display.set_mode(BOARD_SIZE, 0, 32)
     background = pygame.image.load(BACKGROUND).convert()
     model = playmodel.ActorCritic(args.usemodel)
     board = Board()
     if not TEST_ONLY:
         train()
-    test(ai_play_as=WHITE)
+    test(ai_play_as=(BLACK if args.onlytest=="b" or args.onlytest=="black" else WHITE))
+

@@ -41,14 +41,12 @@ class Stone(object):
     @property
     def neighbors(self):
         """Return a list of neighboring points."""
-        neighboring = [(self.point[0] - 1, self.point[1]),
+        neighborings = [(self.point[0] - 1, self.point[1]),
                        (self.point[0] + 1, self.point[1]),
                        (self.point[0], self.point[1] - 1),
                        (self.point[0], self.point[1] + 1)]
-        for point in neighboring:
-            if not (0 <= point[0] < 19) or not (0 <= point[1] < 19):
-                neighboring.remove(point)
-        return neighboring
+        neighborings = [n for n in neighborings if ((0<=n[0]<19) and (0<=n[1]<19))]
+        return neighborings
 
     @property
     def liberties(self):
