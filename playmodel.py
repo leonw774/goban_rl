@@ -5,18 +5,21 @@ from keras.models import Model, load_model
 #from keras.layers import Activation, BatchNormalization, Concatenate, Conv2D, Dense, Dropout, Flatten, LeakyReLU, MaxPooling2D
 from keras.layers import Activation, BatchNormalization, Concatenate, Conv2D, Dense, Dropout, Flatten, Input
 
-GAMMA = 0.996
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
 
-STEP_QUEUE_MAX_LENGTH = 10
+GAMMA = 0.9982
 
-TRAIN_EPOCHS = 2
-TRAIN_EPOCHS_THRESHOLD = 2
-BATCH_SIZE = 16
+STEP_QUEUE_MAX_LENGTH = 100
 
-A_LEARNING_RATE = 10e-4
-A_LEARNING_RATE_DECAY = 0.0
-C_LEARNING_RATE = 10e-4
-C_LEARNING_RATE_DECAY = 0.0
+TRAIN_EPOCHS = 10
+TRAIN_EPOCHS_THRESHOLD = 20
+BATCH_SIZE = 4
+
+A_LEARNING_RATE = 10e-3
+A_LEARNING_RATE_DECAY = 10e-5
+C_LEARNING_RATE = 10e-3
+C_LEARNING_RATE_DECAY = 10e-5
 
 def softmax(_input, _temperature=1.0):
     if len(_input.shape) != 1:
@@ -80,7 +83,7 @@ class ActorCritic :
     def init_models(self):
         input_map = Input((19, 19, 2))
         x1 = Conv2D(16, (7, 7), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
-        x1 = Conv2D(32, (4, 4), activation = "relu")(x1)
+        x1 = Conv2D(32, (3, 3), activation = "relu")(x1)
         
         x2 = Conv2D(16, (11, 11), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
         x2 = Conv2D(32, (3, 3), activation = "relu")(x2)
@@ -94,26 +97,39 @@ class ActorCritic :
         #x = Concatenate()([x1, x2])
         x = Concatenate()([x1, x2, x3])
         
-        shared = Dense(722, activation = "relu")(x)
+        shared = Dense(480, activation = "relu")(x)
         probs = Dense(361)(shared)
         self.actor = Model(input_map, probs)
-        value = Dense(1)(shared)
+        value = Dense(361)(shared)
         self.critic = Model(input_map, value)
         self.critic.summary()
         
-    def decide(self, boardmap, temperature=1.0) :
-        logits = np.squeeze(self.actor.predict(np.expand_dims(boardmap, axis=0)))
-        # label out illegal moves
-        has_stone = (np.max(boardmap, axis=2) == 1)
+    def decide(self, board, temperature=1.0) :
+        playas = board.next
+        logits = np.squeeze(self.actor.predict(np.expand_dims(board.map, axis=0)))
+        
         # transpose so that [x, y] become [x+y*19]
-        has_stone = np.transpose(has_stone).flatten()
-        # just a large negtive nunber
-        logits[has_stone] = -10e3
+        illegal = np.transpose(board.illegal[:, :, 0 if playas==BLACK else 1]).flatten()
+        has_stone = np.transpose(np.max(board.map, axis=2)==1).flatten()
+        not_placeable = np.logical_or(illegal, has_stone)
+        if len(np.where(not_placeable)) == 361:
+            return -1, -1, 0.0
+        
+        # white's goal is to make value low
+        if playas == WHITE:
+            old_max_logit = np.max(logits)
+            logits = -logits
+            logits += old_max_logit - np.max(logits)
+        # just a big negtive number
+        logits[not_placeable] = -10e6
         # astype("float64") because numpy's multinomial convert array to float64 after pval.sum()
         # sometime the sum exceed 1.0 due to numerical rounding
         probs = softmax(logits.astype("float64"), temperature)
         act = np.argmax(np.random.multinomial(1, probs, 1))
         return act%19, act//19, probs[act]
+    
+    def get_value(self, boardmap):
+        return self.critic.predict(np.expand_dims(boardmap, axis=0))[0]
     
     def record(self, point, old_map, new_map, reward, is_terminal):
         self.step_records[-1].add(point[0]+point[1]*19, old_map, new_map, reward, is_terminal)
@@ -129,7 +145,7 @@ class ActorCritic :
             return
         random_idxs = np.random.randint(len(self.step_records), size=TRAIN_EPOCHS)
         for idx in random_idxs:
-            rec_a, rec_os, rec_ns, rec_r, rec_ister = self.step_records[idx].get_arrays()
+            rec_a, rec_os, rec_ns, rec_r, rec_is_terminal = self.step_records[idx].get_arrays()
             #print(rec_a.shape, rec_os.shape, rec_ns.shape, rec_r.shape)
             train_length = self.step_records[idx].length
             
@@ -140,20 +156,21 @@ class ActorCritic :
             new_r = self.critic.predict(rec_ns)
             old_r = self.critic.predict(rec_os)
             for i in range(train_length):
-                if rec_ister[i]:
-                    new_r[i] = rec_r[i]
+                if rec_is_terminal[i]:
+                    new_r[i, rec_a[i]] = rec_r[i]
                 else:
-                    new_r[i] = rec_r[i] + new_r[i] * GAMMA
-                advantages[i, rec_a[i]] = new_r[i] - old_r[i]
+                    new_r[i, rec_a[i]] = rec_r[i] + new_r[i, rec_a[i]] * GAMMA
+                advantages[i, rec_a[i]] = new_r[i, rec_a[i]] - old_r[i, rec_a[i]]
             
             new_a = self.actor.predict(rec_os)
             new_a = new_a + advantages 
             #print("advantages:", advantages)
-            closs += self.critic.fit(rec_os, new_r, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
+            closs += self.critic.fit(rec_os, advantages, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
             aloss += self.actor.fit(rec_os, new_a, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
         closs /= TRAIN_EPOCHS
         aloss /= TRAIN_EPOCHS
         print("avgcloss: %e, avgaloss: %e"%(closs, aloss))
+        print("midgame-reward: %e"%(np.mean(new_r[len(new_r)//2])))
         
     def save(self, save_weight_name) :
         self.actor.save("actor_" + save_weight_name)

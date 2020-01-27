@@ -114,7 +114,8 @@ class Group(object):
         """Remove the entire group."""
         while self.stones:
             self.stones[0].remove()
-        self.board.groups.remove(self)
+        if self in self.board.groups:
+            self.board.groups.remove(self)
         del self
 
     def update_liberties(self):
@@ -128,11 +129,11 @@ class Group(object):
         for stone in self.stones:
             for liberty in stone.liberties:
                 liberties.append(liberty)
-        self.liberties = set(liberties)
-        if len(self.liberties) == 0:
+        liberties = set(liberties)
+        if len(liberties) == 0:
             self.remove()
             return 0
-        return len(self.liberties)
+        return len(liberties)
 
     def __str__(self):
         """Return a list of the group's stones as a string."""
