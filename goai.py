@@ -31,8 +31,6 @@ args = parser.parse_args()
 EPOCHS = args.epochs
 TEST_ONLY = (args.test == "b" or args.test == "w")
 
-MAX_STEP = 720
-
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 BOARD_SIZE = 9
@@ -41,10 +39,11 @@ BACKGROUND = 'images/ramin.jpg'
 GRID_SIZE = 20
 DRAW_BOARD_SIZE = (GRID_SIZE * BOARD_SIZE + 20, GRID_SIZE * BOARD_SIZE + 20)
 
+MAX_STEP = 2*BOARD_SIZE**2
 B_WIN_REWARD = 1.0
 UNKNOWN_REWARD = 0.0
 W_WIN_REWARD = -1.0
-KOMI = 4.5
+KOMI = 0
 
 class Stone(go.Stone):
     def __init__(self, board, point, color, is_draw = True):
@@ -179,7 +178,7 @@ class Board(go.Board):
                          (e[0] + 1, e[1]),
                          (e[0], e[1] - 1),
                          (e[0], e[1] + 1)]
-            neighbors = [n for n in neighbors if ((0<=n[0]<19) and (0<=n[1]<19))]
+            neighbors = [n for n in neighbors if ((0<=n[0]<self.size) and (0<=n[1]<self.size))]
             
             if all([self.has_stone(x) for x in neighbors]):
                 neighbor_stones = self.search(points=neighbors)
@@ -243,7 +242,7 @@ class Board(go.Board):
         while self.groups:
             self.groups[0].remove()
         self.groups = []
-        self.illegal = np.full((19, 19, 2), False)
+        self.illegal.fill(False)
         self.next = BLACK
         self.b_catched = 0
         self.w_catched = 0
@@ -289,7 +288,7 @@ def train():
             try_steps = 0
             while (try_steps < MAX_STEP - steps):
                 old_map = board.map
-                x, y, cor = model.decide(board, TEMPERATURE)
+                x, y, prob = model.decide(board, TEMPERATURE)
                 if x==-1 and y==-1:
                     pass_count += 1
                     break
@@ -297,12 +296,13 @@ def train():
                     pass_count = 0
                 try_steps += 1
                 added_stone = Stone(board, (x, y), board.turn())
-                # if is suicide
+                # if is illegal
                 if board.update_liberties(added_stone) != "illegal":
                     break
+            # end while try
             winner = board.is_gameover(pass_count)
             if winner:
-                print("winner:", winner)
+                print("winner:", winner, "\nend at value:", prob)
                 model.record((x, y), old_map, board.map, (B_WIN_REWARD if winner == BLACK else W_WIN_REWARD), True)
                 break
             elif board.next != trainas:
@@ -312,14 +312,14 @@ def train():
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     exit()
-        # end while
+        # end while game
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 exit()
         board.clear()
         model.learn()
         model.add_record()
-        if epoch>5 and epoch%2==1:
+        if epoch>1 and epoch%20==1:
             model.save("model.h5")
             TEMPERATURE = max(MIN_TEMPERATURE, TEMPERATURE*TEMPERATURE_DECAY)
 
@@ -338,7 +338,7 @@ def test(ai_play_as):
             # if is suicide
             if board.update_liberties(added_stone) == "illegal":
                 continue
-            print("value:", model.get_value(old_board)[x+19*y])
+            print("value:", model.get_value(old_board)[x+BOARD_SIZE*y])
         else:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -346,21 +346,21 @@ def test(ai_play_as):
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1 and board.outline.collidepoint(event.pos):
                         old_board = board.map
-                        x = int(round(((event.pos[0] - 25) / 20.0), 0))
-                        y = int(round(((event.pos[1] - 25) / 20.0), 0))
+                        x = int(round(((event.pos[0] - 25) / GRID_SIZE), 0))
+                        y = int(round(((event.pos[1] - 25) / GRID_SIZE), 0))
                         #print(x, y)
                         if board.search(point=(x, y)) != []:
                             continue
                         added_stone = Stone(board, (x, y), board.turn())
                         board.update_liberties(added_stone)
-                    print("value:", model.get_value(old_board)[x+19*y]) 
+                    print("value:", model.get_value(old_board)[x+BOARD_SIZE*y]) 
 
 if __name__ == '__main__':
     pygame.init()
     pygame.display.set_caption('Go-Ai')
     screen = pygame.display.set_mode(DRAW_BOARD_SIZE, 0, 32)
     background = pygame.image.load(BACKGROUND).convert()
-    model = playmodel.ActorCritic(BOARD_SIZE, args.usemodel)
+    model = playmodel.ActorCritic(BOARD_SIZE, args.use_model)
     board = Board(size=BOARD_SIZE)
 
     if not TEST_ONLY:

@@ -11,16 +11,16 @@ BLACK = (0, 0, 0)
 
 GAMMA = 0.9982
 
-STEP_QUEUE_MAX_LENGTH = 100
+STEP_QUEUE_MAX_LENGTH = 10
 
-TRAIN_EPOCHS = 10
-TRAIN_EPOCHS_THRESHOLD = 20
+TRAIN_EPOCHS = 4
+TRAIN_EPOCHS_THRESHOLD = 8
 BATCH_SIZE = 4
 
 A_LEARNING_RATE = 10e-3
-A_LEARNING_RATE_DECAY = 10e-5
+A_LEARNING_RATE_DECAY = 0
 C_LEARNING_RATE = 10e-3
-C_LEARNING_RATE_DECAY = 10e-5
+C_LEARNING_RATE_DECAY = 0
 
 def softmax(_input, _temperature=1.0):
     if len(_input.shape) != 1:
@@ -85,7 +85,6 @@ class ActorCritic :
     def init_models(self, size):
         input_map = Input((size, size, 2))
         x1 = Conv2D(16, (size//2, size//2), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
-
         x1 = Conv2D(32, (3, 3), activation = "relu")(x1)
         
         x2 = Conv2D(16, ((size*3)//4, (size*3)//4), strides=(1, 1), padding = "valid", activation = "relu")(input_map)
@@ -100,30 +99,28 @@ class ActorCritic :
         #x = Concatenate()([x1, x2])
         x = Concatenate()([x1, x2, x3])
         
-        shared = Dense(2*size*size, activation = "relu")(x)
-        probs = Dense(size*size)(shared)
+        shared = Dense(2*size**2, activation = "relu")(x)
+        logits = Dense(size**2)(shared)
+        self.actor = Model(input_map, logits)
 
-        self.actor = Model(input_map, probs)
-        value = Dense(361)(shared)
-        self.critic = Model(input_map, value)
+        values = Dense(size**2)(shared)
+        self.critic = Model(input_map, values)
         self.critic.summary()
     
     def decide(self, board, temperature=1.0) :
         playas = board.next
         logits = np.squeeze(self.actor.predict(np.expand_dims(board.map, axis=0)))
         
-        # transpose so that [x, y] become [x+y*19]
+        # transpose so that [x, y] become [x+y*size]
         illegal = np.transpose(board.illegal[:, :, 0 if playas==BLACK else 1]).flatten()
         has_stone = np.transpose(np.max(board.map, axis=2)==1).flatten()
         not_placeable = np.logical_or(illegal, has_stone)
-        if len(np.where(not_placeable)) == 361:
+        if len(np.where(not_placeable)) == board.size**2:
             return -1, -1, 0.0
         
         # white's goal is to make value low
         if playas == WHITE:
-            old_max_logit = np.max(logits)
             logits = -logits
-            logits += old_max_logit - np.max(logits)
         # just a big negtive number
         logits[not_placeable] = -10e6
 
@@ -144,6 +141,9 @@ class ActorCritic :
             self.step_records = self.step_records[1:]
         self.step_records.append(StepRecord())
     
+    def reward_normalization(self, x):
+        return (x - x.mean()) / np.std(x)
+
     def learn(self):
         closs = 0; aloss = 0
         if len(self.step_records) < TRAIN_EPOCHS_THRESHOLD:
@@ -151,12 +151,12 @@ class ActorCritic :
         random_idxs = np.random.randint(len(self.step_records), size=TRAIN_EPOCHS)
         for idx in random_idxs:
             rec_a, rec_os, rec_ns, rec_r, rec_is_terminal = self.step_records[idx].get_arrays()
-            #print(rec_a.shape, rec_os.shape, rec_ns.shape, rec_r.shape)
+            rec_r_norm = self.reward_normalization(rec_r)
             train_length = self.step_records[idx].length
             
             #new_r = np.zeros((train_length, 1))
-            #new_a = np.zeros((train_length, 361))
-            advantages = np.zeros((train_length, 361))
+            #new_a = np.zeros((train_length, self.size))
+            advantages = np.zeros((train_length, self.size**2))
 
             new_r = self.critic.predict(rec_ns)
             old_r = self.critic.predict(rec_os)
@@ -175,7 +175,6 @@ class ActorCritic :
         closs /= TRAIN_EPOCHS
         aloss /= TRAIN_EPOCHS
         print("avgcloss: %e, avgaloss: %e"%(closs, aloss))
-        print("midgame-reward: %e"%(np.mean(new_r[len(new_r)//2])))
         
     def save(self, save_weight_name) :
         self.actor.save("actor_" + save_weight_name)
