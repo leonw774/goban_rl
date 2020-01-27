@@ -16,7 +16,6 @@ __version__ = "0.1"
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 
-
 class Stone(object):
     def __init__(self, board, point, color):
         """Create and initialize a stone.
@@ -45,7 +44,7 @@ class Stone(object):
                        (self.point[0] + 1, self.point[1]),
                        (self.point[0], self.point[1] - 1),
                        (self.point[0], self.point[1] + 1)]
-        neighborings = [n for n in neighborings if ((0<=n[0]<19) and (0<=n[1]<19))]
+        neighborings = [n for n in neighborings if ((0<=n[0]<self.board.size) and (0<=n[1]<self.board.size))]
         return neighborings
 
     @property
@@ -76,7 +75,7 @@ class Stone(object):
 
     def __str__(self):
         """Return the location of the stone, e.g. 'D17'."""
-        return 'ABCDEFGHJKLMNOPQRST'[self.point[0]] + str(19-(self.point[1]))
+        return 'ABCDEFGHJKLMNOPQRST'[self.point[0]] + str(self.board.size-(self.point[1]))
 
 
 class Group(object):
@@ -140,9 +139,10 @@ class Group(object):
 
 
 class Board(object):
-    def __init__(self):
+    def __init__(self, size):
         """Create and initialize an empty board."""
         self.groups = []
+        self.size = size
         self.next = BLACK
 
     def search(self, point=None, points=[]):

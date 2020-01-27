@@ -1,4 +1,5 @@
 import numpy as np
+import go
 from keras import backend as K
 from keras import optimizers, losses
 from keras.models import Model, load_model
@@ -60,16 +61,17 @@ class StepRecord() :
         
 
 class ActorCritic :
-    def __init__ (self, load_model_name="") :    
+    def __init__ (self, size, load_model_name) :    
         self.actor = None
         self.critic = None
         self.step_records = [StepRecord()]
+        self.size = size
         
         if load_model_name:
             self.actor = load_model("actor_" + load_model_name)
             self.critic = load_model("critic_" + load_model_name)
         else :
-            self.init_models()
+            self.init_models(size)
             
         self.actor_optimizer = optimizers.rmsprop(lr = A_LEARNING_RATE, decay = A_LEARNING_RATE_DECAY)
         self.actor.compile(loss = "mse", optimizer = self.actor_optimizer)
@@ -77,15 +79,15 @@ class ActorCritic :
         self.critic_optimizer = optimizers.rmsprop(lr = C_LEARNING_RATE, decay = C_LEARNING_RATE_DECAY)
         self.critic.compile(loss = "mse", optimizer = self.critic_optimizer)
     
-    def init_models(self):
-        input_map = Input((19, 19, 2))
-        x1 = Conv2D(16, (7, 7), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
-        x1 = Conv2D(32, (4, 4), activation = "relu")(x1)
+    def init_models(self, size):
+        input_map = Input((size, size, 2))
+        x1 = Conv2D(16, (size//2, size//2), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
+        x1 = Conv2D(32, (3, 3), activation = "relu")(x1)
         
-        x2 = Conv2D(16, (11, 11), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
+        x2 = Conv2D(16, ((size*3)//4, (size*3)//4), strides=(1, 1), padding = "valid", activation = "relu")(input_map)
         x2 = Conv2D(32, (3, 3), activation = "relu")(x2)
         
-        x3 = Conv2D(16, (15, 15), strides=(1, 1), padding = "valid", activation = "relu")(input_map)
+        x3 = Conv2D(16, (size-2, size-2), strides=(1, 1), padding = "valid", activation = "relu")(input_map)
         x3 = Conv2D(32, (2, 2), activation = "relu")(x3)
         
         x1 = Flatten()(x1)
@@ -94,8 +96,8 @@ class ActorCritic :
         #x = Concatenate()([x1, x2])
         x = Concatenate()([x1, x2, x3])
         
-        shared = Dense(722, activation = "relu")(x)
-        probs = Dense(361)(shared)
+        shared = Dense(2*size*size, activation = "relu")(x)
+        probs = Dense(size*size)(shared)
         self.actor = Model(input_map, probs)
         value = Dense(1)(shared)
         self.critic = Model(input_map, value)
@@ -105,7 +107,7 @@ class ActorCritic :
         logits = np.squeeze(self.actor.predict(np.expand_dims(boardmap, axis=0)))
         # label out illegal moves
         has_stone = (np.max(boardmap, axis=2) == 1)
-        # transpose so that [x, y] become [x+y*19]
+        # transpose so that [x, y] become [x+y*board_size]
         has_stone = np.transpose(has_stone).flatten()
         # just a large negtive nunber
         logits[has_stone] = -10e3
@@ -113,10 +115,10 @@ class ActorCritic :
         # sometime the sum exceed 1.0 due to numerical rounding
         probs = softmax(logits.astype("float64"), temperature)
         act = np.argmax(np.random.multinomial(1, probs, 1))
-        return act%19, act//19, probs[act]
+        return act%self.size, act//self.size, probs[act]
     
     def record(self, point, old_map, new_map, reward, is_terminal):
-        self.step_records[-1].add(point[0]+point[1]*19, old_map, new_map, reward, is_terminal)
+        self.step_records[-1].add(point[0]+point[1]*self.size, old_map, new_map, reward, is_terminal)
     
     def add_record(self):
         if len(self.step_records) >= STEP_QUEUE_MAX_LENGTH:

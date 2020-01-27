@@ -23,9 +23,6 @@ import go
 import playmodel
 from sys import exit
 
-BACKGROUND = 'images/ramin.jpg'
-BOARD_SIZE = (410, 410)
-
 parser = argparse.ArgumentParser()
 parser.add_argument("--epochs", default=100, type=int)
 parser.add_argument("--usemodel", type=str, default="", action="store")
@@ -39,6 +36,11 @@ MAX_TRY_STEP = 630
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
+BOARD_SIZE = 9
+
+BACKGROUND = 'images/ramin.jpg'
+GRID_SIZE = 20
+DRAW_BOARD_SIZE = (GRID_SIZE * BOARD_SIZE + 20, GRID_SIZE * BOARD_SIZE + 20)
 
 WIN_REWARD = 1
 UNKNOWN_REWARD = 0
@@ -50,7 +52,7 @@ class Stone(go.Stone):
         """Create, initialize and draw a stone."""
         super(Stone, self).__init__(board, point, color)
         self.board.update_map(point, color)
-        self.coords = (25 + self.point[0] * 20, 25 + self.point[1] * 20)
+        self.coords = (25 + self.point[0] * GRID_SIZE, 25 + self.point[1] * GRID_SIZE)
         self.draw()
 
     def draw(self):
@@ -113,7 +115,7 @@ class Group(go.Group):
         
         
 class Board(go.Board):
-    def __init__(self):
+    def __init__(self, size):
         """Create, initialize and map an empty board.
         map is a numpy array representation of the board
         empty = (0, 0)
@@ -122,24 +124,24 @@ class Board(go.Board):
         """
         self.black_catch = 0
         self.white_catch = 0
-        self.map = np.zeros((19, 19, 2))
-        self.outline = pygame.Rect(25, 25, 360, 360)
+        self.outline = pygame.Rect(25, 25, DRAW_BOARD_SIZE[0]-40, DRAW_BOARD_SIZE[1]-40)
+        super(Board, self).__init__(size)
         self.draw()
-        super(Board, self).__init__()
+        self.map = np.zeros((self.size, self.size, 2))
     
     def is_gameover(self):
         """ Return winner if game is over, Return None if not"""
         empty_count = 0
         black_count = 0
         white_count = KOMI
-        for i in range(19):
-            for j in range(19):
+        for i in range(self.size):
+            for j in range(self.size):
                 if np.max(board.map[i, j]) == 0:
                     empty_count += 1
                 else:
                     black_count += board.map[i, j][0]
                     white_count += board.map[i, j][1]
-        if empty_count <= 25:
+        if empty_count <= self.size*self.size*0.06:
             return BLACK if (black_count+self.white_catch*0.5 >= white_count+self.black_catch*0.5) else WHITE
         else:
             return None
@@ -189,8 +191,8 @@ class Board(go.Board):
     def draw(self):
         """Draw the board to the background and blit it to the screen.
 
-        The board is drawn by first drawing the outline, then the 19x19
-        grid and finally by adding hoshi to the board. All these
+        The board is drawn by first drawing the outline, then the grid
+        and finally by adding hoshi to the board. All these
         operations are done with pygame's draw functions.
 
         This method should only be called once, when initializing the
@@ -199,15 +201,16 @@ class Board(go.Board):
         """
         pygame.draw.rect(background, BLACK, self.outline, 3)
         # Outline is inflated here for future use as a collidebox for the mouse
-        self.outline.inflate_ip(20, 20)
-        for i in range(18):
-            for j in range(18):
-                rect = pygame.Rect(25 + (20 * i), 25 + (20 * j), 20, 20)
+        self.outline.inflate_ip(GRID_SIZE, GRID_SIZE)
+        for i in range(self.size-1):
+            for j in range(self.size-1):
+                rect = pygame.Rect(25 + (GRID_SIZE * i), 25 + (GRID_SIZE * j), GRID_SIZE, GRID_SIZE)
                 pygame.draw.rect(background, BLACK, rect, 1)
-        for i in range(3):
-            for j in range(3):
-                coords = (85 + (120 * i), 85 + (120 * j))
-                pygame.draw.circle(background, BLACK, coords, 5, 0)
+        if self.size == 19:
+            for i in range(3):
+                for j in range(3):
+                    coords = (85 + (120 * i), 85 + (120 * j))
+                    pygame.draw.circle(background, BLACK, coords, 5, 0)
         screen.blit(background, (0, 0))
         pygame.display.update()
 
@@ -295,10 +298,10 @@ def test(ai_play_as):
 if __name__ == '__main__':
     pygame.init()
     pygame.display.set_caption('Go-Ai')
-    screen = pygame.display.set_mode(BOARD_SIZE, 0, 32)
+    screen = pygame.display.set_mode(DRAW_BOARD_SIZE, 0, 32)
     background = pygame.image.load(BACKGROUND).convert()
-    model = playmodel.ActorCritic(args.usemodel)
-    board = Board()
+    model = playmodel.ActorCritic(BOARD_SIZE, args.usemodel)
+    board = Board(size=BOARD_SIZE)
     if not TEST_ONLY:
         train()
     test(ai_play_as=(BLACK if args.onlytest=="b" or args.onlytest=="black" else WHITE))
