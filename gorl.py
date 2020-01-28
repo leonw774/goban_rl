@@ -1,17 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-"""Goban made with Python, pygame and go.py.
-
-This is a front-end for my go library 'go.py', handling drawing and
-pygame-related activities. Together they form a fully working goban.
-
-"""
-
-"""
-Edit by leow774 for keras ai training
-"""
-
 __author__ = "Aku Kotkavuo <aku@hibana.net>"
 __version__ = "0.1"
 
@@ -60,13 +49,12 @@ class Stone(go.Stone):
         if self.is_drawn:
             self.coords = (25 + self.point[0] * GRID_SIZE, 25 + self.point[1] * GRID_SIZE)
             self.draw()
-
-
+    
     def draw(self):
         """Draw the stone as a circle."""
         pygame.draw.circle(screen, self.color, self.coords, 10, 0)
         pygame.display.update()
-
+    
     def remove(self):
         """Remove the stone from board.
         Also remove this stone from board map"""
@@ -77,60 +65,7 @@ class Stone(go.Stone):
             pygame.display.update()
         self.board.map[self.point] = [0.0, 0.0]
         super(Stone, self).remove()
-    
-    @property
-    def liberties(self):
-        """Find and return the liberties of the stone."""
-        neighbors = self.neighbors
-        liberties = []
-        for neighbor in neighbors:
-            if np.max(self.board.map[neighbor[0], neighbor[1]]) == 0:
-                liberties.append(neighbor)
-        return liberties
-    
-    def find_group(self):
-        """Find or create a group for the stone."""
-        groups = []
-        stones = self.board.search(points=self.neighbors)
-        for stone in stones:
-            if stone.color == self.color and stone.group not in groups:
-                groups.append(stone.group)
-        if not groups:
-            group = Group(self.board, self)
-            return group
-        else:
-            if len(groups) > 1:
-                for group in groups[1:]:
-                    groups[0].merge(group)
-            groups[0].stones.append(self)
-            return groups[0]
 
-class Group(go.Group):
-    def __init__(self, board, stone):
-        """Create and initialize a new group.
-
-        Arguments:
-        board -- the board which this group resides in
-        stone -- the initial stone in the group
-
-        """
-        super(Group, self).__init__(board, stone)
-        self.color = stone.color
-        self.liberties = None
-        self.update_liberties()
-    
-    def update_liberties(self):
-        """Update the group's liberties.
-        Return liberties count
-        As this method will NOT remove the entire group if no liberties can
-        be found. The removal is now handled in Board.update_liberties
-
-        """
-        liberties = []
-        for stone in self.stones:
-            for liberty in stone.liberties:
-                liberties.append(liberty)
-        self.liberties = set(liberties)
         
 class Board(go.Board):
     def __init__(self, size, is_drawn=True):
@@ -140,15 +75,11 @@ class Board(go.Board):
         black = (1, 0)
         white = (0, 1)
         """
-        self.b_catched = 0
-        self.w_catched = 0
         self.is_drawn = is_drawn
         super(Board, self).__init__(size)
         if is_drawn:
             self.outline = pygame.Rect(25, 25, DRAW_BOARD_SIZE[0]-40, DRAW_BOARD_SIZE[1]-40)
             self.draw()
-        self.map = np.zeros((self.size, self.size, 2))
-        self.illegal = np.full((self.size, self.size, 2), False)
     
     def is_gameover(self, pass_count=0):
         """ Return winner if game is over, Return None if not"""
@@ -171,86 +102,6 @@ class Board(go.Board):
             return WHITE
         else:
             return None
-    
-    def has_stone(self, point):
-        return np.max(self.map[point]) == 1
-    
-    def update_illegal(self):
-        empty_points = np.argwhere(np.max(self.map, axis=2)==0)
-        next_color = 0 if self.next == BLACK else 1
-        self.illegal[:, :, next_color] = False
-        #print(empty_points)
-        for e in empty_points:
-            neighbors = [(e[0] - 1, e[1]),
-                         (e[0] + 1, e[1]),
-                         (e[0], e[1] - 1),
-                         (e[0], e[1] + 1)]
-            neighbors = [n for n in neighbors if ((0<=n[0]<self.size) and (0<=n[1]<self.size))]
-            
-            if all([self.has_stone(x) for x in neighbors]):
-                neighbor_stones = self.search(points=neighbors)
-                is_suicide = False
-                # suicide: made itself killed or made neighboring same color stone killed
-                is_suicide = all([neighbor_stone.color != self.next for neighbor_stone in neighbor_stones])
-                if not is_suicide:
-                    for neighbor_stone in neighbor_stones:
-                        if neighbor_stone.color == self.next:
-                            if len(neighbor_stone.group.liberties) == 1:
-                                is_suicide = True
-                                break
-                if is_suicide:
-                    is_suicide_kill = False
-                    for neighbor_stone in neighbor_stones:
-                        #print("lib test - looking at:", neighbor_stone.group)
-                        if neighbor_stone.color != self.next:
-                            if len(neighbor_stone.group.liberties) == 1:
-                                is_suicide_kill = True
-                                break
-                    #print("next:", self.next, "exam:", e, is_suicide_kill)
-                    if not is_suicide_kill:
-                        self.illegal[e[0], e[1], next_color] = True
-        #print(np.argwhere(self.illegal))
-    
-    def update_map(self, point, color):
-        if color == BLACK:
-            self.map[point] = [1.0, 0.0]
-        if color == WHITE:
-            self.map[point] = [0.0, 1.0]
-    
-    def update_liberties(self, added_stone=None):
-        """Updates the liberties of the entire board, group by group.
-        Return None if it is a legal move, Return string "illegal" if not
-
-        Usually a stone is added each turn. To allow killing by 'suicide',
-        all the 'old' groups should be updated before the newly added one.
-
-        """
-        if added_stone:
-            if self.illegal[added_stone.point[0], added_stone.point[1], 0 if added_stone.color==BLACK else 1]:
-                added_stone.remove()
-                self.turn()
-                return "illegal"
-        for group in self.groups:
-            if added_stone:
-                if group == added_stone.group:
-                    continue
-            group.update_liberties()
-            if len(group.liberties) == 0:
-                if group.color == BLACK:
-                    self.b_catched += len(group.stones)
-                else:
-                    self.w_catched += len(group.stones)
-                group.remove()
-        self.update_illegal()
-    
-    def clear(self):
-        while self.groups:
-            self.groups[0].remove()
-        self.groups = []
-        self.illegal.fill(False)
-        self.next = BLACK
-        self.b_catched = 0
-        self.w_catched = 0
        
     def draw(self):
         """Draw the board to the background and blit it to the screen.
@@ -280,9 +131,10 @@ class Board(go.Board):
 
 def train():
     MAX_TEMPERATURE = 10.0
-    TEMPERATURE = MAX_TEMPERATURE
     MIN_TEMPERATURE = 0.1
+    TEMPERATURE = MAX_TEMPERATURE
     TEMPERATURE_DECAY = (MIN_TEMPERATURE/TEMPERATURE) ** (EPOCHS/2)
+    black_win_count = 0
     for epoch in range(EPOCHS*2):
         steps = 0
         pass_count = 0
@@ -292,7 +144,7 @@ def train():
             try_steps = 0
             while (try_steps < MAX_STEP - steps):
                 pre_map = board.map
-                x, y, prob = model.decide(board, TEMPERATURE)
+                x, y, instinct = model.decide_random(board, TEMPERATURE)
                 if x==-1 and y==-1:
                     pass_count += 1
                     board.turn()
@@ -307,18 +159,23 @@ def train():
             # end while try
             winner = board.is_gameover(pass_count)
             if winner:
-                if epoch%10==0:
-                    print("epoch", epoch, "winner:", "B." if winner==BLACK else "W.", " end value:", prob)
-                model.record((x, y), pre_map, board.map, (B_WIN_REWARD if winner==BLACK else W_WIN_REWARD), True)
+                if winner==BLACK:
+                    reward = B_WIN_REWARD
+                    black_win_count += 1
+                else:
+                    reward = W_WIN_REWARD
+                model.record((x, y), pre_map, board.map, reward, True)
+                if epoch%20==0:
+                    print("epoch", epoch, "Black win rate:", black_win_count/epoch)
                 break
             elif board.next != trainas:
                 model.record((x, y), pre_map, board.map, UNKNOWN_REWARD, False)
             steps += 1
         # end while game
         board.clear()
-        model.learn(verbose=(epoch%10==0))
+        model.learn(verbose=(epoch%20==0))
         model.add_record()
-        if epoch>1 and epoch%10==0:
+        if epoch>1 and epoch%20==0:
             model.save("model.h5")
             TEMPERATURE = max(MIN_TEMPERATURE, TEMPERATURE*TEMPERATURE_DECAY)
 
@@ -330,13 +187,13 @@ def test(ai_play_as):
         pygame.time.wait(250)
         if ai_play_as == board.next:
             old_board = board.map
-            x, y, prob = model.decide(board, 0.01)
+            x, y, instinct, win_rate = model.decide_tree_search(board, temperature=0.01, depth=2, kth=4)
             if x==-1 and y==-1:
                 print("model passes")
                 board.turn()
                 continue
             else:
-                print("model choose (%d, %d) at prob: %.4e"%(x, y, prob))
+                print("model choose (%d, %d)\ninstinct:%.4e win rate:%.3f"%(x, y, instinct, win_rate))
             if board.search(point=(x, y)) != []:
                 continue
             added_stone = Stone(board, (x, y), board.turn())
@@ -359,7 +216,7 @@ def test(ai_play_as):
                         added_stone = Stone(board, (x, y), board.turn())
                         board.update_liberties(added_stone)
                     print("player choose (%d, %d)"%(x, y))
-                    print("value:", model.get_value(old_board)[x+BOARD_SIZE*y]) 
+                    print("win rate:%0.3f"%win_rate, "value:", model.get_value(old_board)[x+BOARD_SIZE*y]) 
 
 if __name__ == '__main__':
     model = playmodel.ActorCritic(BOARD_SIZE, args.use_model)

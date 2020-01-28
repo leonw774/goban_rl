@@ -1,5 +1,6 @@
 import numpy as np
 import go
+from copy import copy, deepcopy
 from keras import backend as K
 from keras import optimizers, losses
 from keras.models import Model, load_model
@@ -21,11 +22,15 @@ A_LR_DECAY = 10e-6
 C_LR = 10e-4
 C_LR_DECAY = 10e-6
 
-def softmax(_input, _temperature=1.0):
-    if len(_input.shape) != 1:
+def softmax(x, temperature=1.0):
+    x = x.astype("float64")
+    if len(x.shape) != 1:
         print("softmax input must be 1-D numpy array")
         return
-    return np.exp(_input/_temperature)/np.sum(np.exp(_input/_temperature))
+    return np.exp(x/temperature)/np.sum(np.exp(x/temperature))
+
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
 
 class StepRecord() :
     def __init__(self) :
@@ -105,29 +110,68 @@ class ActorCritic :
         self.critic = Model(input_map, values)
         self.critic.summary()
     
-    def decide(self, board, temperature=1.0) :
+    def decide_random(self, board, temperature=1.0):
         playas = board.next
-        logits = np.squeeze(self.actor.predict(np.expand_dims(board.map, axis=0)))
-        
         # transpose so that [x, y] become [x+y*size]
         illegal = np.transpose(board.illegal[:, :, 0 if playas==BLACK else 1]).flatten()
         has_stone = np.transpose(np.max(board.map, axis=2)==1).flatten()
-        not_placeable = np.logical_or(illegal, has_stone)
-        print(np.where(not_placeable)[0].shape[0])
-        if np.where(not_placeable)[0].shape[0] == board.size**2:
+        unplaceable = np.logical_or(illegal, has_stone)
+        if np.where(unplaceable)[0].shape[0] == board.size**2:
             return -1, -1, 0.0
+        
+        logits = np.squeeze(self.actor.predict(np.expand_dims(board.map, axis=0)))
         
         # white's goal is to make value low
         if playas == WHITE:
             logits = -logits
         # just a big negtive number
-        logits[not_placeable] = -10e6
+        logits[unplaceable] = -10e6
 
         # astype("float64") because numpy's multinomial convert array to float64 after pval.sum()
         # sometime the sum exceed 1.0 due to numerical rounding
-        probs = softmax(logits.astype("float64"), temperature)
-        act = np.argmax(np.random.multinomial(1, probs, 1))
-        return act%self.size, act//self.size, probs[act]
+        instinct = softmax(logits, temperature)
+        act = np.argmax(np.random.multinomial(1, instinct, 1))
+        return act%self.size, act//self.size, instinct[act]
+    
+    def decide_tree_search(self, board, temperature=0.01, depth=2, kth=4):
+        playas = board.next
+        # transpose so that [x, y] become [x+y*size]
+        illegal = np.transpose(board.illegal[:, :, 0 if playas==BLACK else 1]).flatten()
+        has_stone = np.transpose(np.max(board.map, axis=2)==1).flatten()
+        unplaceable = np.logical_or(illegal, has_stone)
+        if np.where(unplaceable)[0].shape[0] == board.size**2:
+            return -1, -1, 0.0
+        
+        logits = np.squeeze(self.actor.predict(np.expand_dims(board.map, axis=0)))
+        values = np.squeeze(self.critic.predict(np.expand_dims(board.map, axis=0)))
+        
+        # white's goal is to make value low
+        if playas == WHITE:
+            logits = -logits
+            values = -values
+        # just a big negtive number
+        logits[unplaceable] = -10e6
+        
+        win_rate = sigmoid(values)
+        instinct = softmax(logits, temperature)
+        
+        if depth<1:
+            act = np.argmax(win_rate)
+            #print("depth 0 find", act, "w/ win_rate", win_rate[act])
+        else:
+            #print("depth", depth)
+            candidates = np.argpartition(instinct, -kth)[-kth:]
+            searched_win_rate = win_rate[candidates]
+            for idx, candidate in enumerate(candidates):
+                board_cpy = deepcopy(board)
+                add_stone = go.Stone(board_cpy, 
+                                  (candidate%self.size, candidate//self.size),
+                                  playas)
+                _x, _y, _inst, _wr = self.decide_tree_search(board_cpy, temperature, depth-1, kth)
+                searched_win_rate[idx] = _wr
+                #print("searched for candidate", candidate, "find win_rate", _wr)
+            act = candidates[np.argmax(searched_win_rate)]
+        return act%self.size, act//self.size, instinct[act], win_rate[act]
     
     def get_value(self, boardmap):
         return self.critic.predict(np.expand_dims(boardmap, axis=0))[0]

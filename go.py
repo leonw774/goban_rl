@@ -1,12 +1,10 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-"""Go library made with pure Python.
+import numpy as np
 
-This library offers a variety of Go related classes and methods.
-
-There is a companion module called 'goban' which serves as a front-end
-for this library, forming a fully working go board together.
+"""Go library
+Edited by leow774 for keras ai training
 
 """
 
@@ -31,7 +29,7 @@ class Stone(object):
         self.point = point
         self.color = color
         self.group = self.find_group()
-
+    
     def remove(self):
         """Remove the stone from board."""
         self.group.stones.remove(self)
@@ -50,10 +48,11 @@ class Stone(object):
     @property
     def liberties(self):
         """Find and return the liberties of the stone."""
-        liberties = self.neighbors
-        stones = self.board.search(points=self.neighbors)
-        for stone in stones:
-            liberties.remove(stone.point)
+        neighbors = self.neighbors
+        liberties = []
+        for neighbor in neighbors:
+            if np.max(self.board.map[neighbor[0], neighbor[1]]) == 0:
+                liberties.append(neighbor)
         return liberties
 
     def find_group(self):
@@ -90,6 +89,9 @@ class Group(object):
         self.board = board
         self.board.groups.append(self)
         self.stones = [stone]
+        self.color = stone.color
+        self.liberties = None
+        self.update_liberties()
 
     def merge(self, group):
         """Merge two groups.
@@ -115,20 +117,18 @@ class Group(object):
         if self in self.board.groups:
             self.board.groups.remove(self)
         del self
-
+    
     def update_liberties(self):
         """Update the group's liberties.
-        As this method will remove the entire group if no liberties can
-        be found, it should only be called once per turn.
+        As this method will NOT remove the entire group if no liberties can
+        be found. The removal is now handled in Board.update_liberties
 
         """
         liberties = []
         for stone in self.stones:
             for liberty in stone.liberties:
                 liberties.append(liberty)
-        liberties = set(liberties)
-        if len(liberties) == 0:
-            self.remove()
+        self.liberties = set(liberties)
 
     def __str__(self):
         """Return a list of the group's stones as a string."""
@@ -140,8 +140,79 @@ class Board(object):
         """Create and initialize an empty board."""
         self.groups = []
         self.size = size
+        self.map = np.zeros((self.size, self.size, 2))
+        self.illegal = np.full((self.size, self.size, 2), False)
+        self.b_catched = 0
+        self.w_catched = 0
         self.next = BLACK
+    
+    def has_stone(self, point):
+        return np.max(self.map[point]) == 1
+    
+    def update_illegal(self):
+        empty_points = np.argwhere(np.max(self.map, axis=2)==0)
+        next_color = 0 if self.next == BLACK else 1
+        self.illegal[:, :, next_color] = False
+        for e in empty_points:
+            neighbors = [(e[0] - 1, e[1]),
+                         (e[0] + 1, e[1]),
+                         (e[0], e[1] - 1),
+                         (e[0], e[1] + 1)]
+            neighbors = [n for n in neighbors if ((0<=n[0]<self.size) and (0<=n[1]<self.size))]
+            
+            if all([self.has_stone(x) for x in neighbors]):
+                neighbor_stones = self.search(points=neighbors)
+                # suicide: made itself killed or made neighboring same color stone killed
+                is_suicide = all([neighbor_stone.color != self.next for neighbor_stone in neighbor_stones])
+                if not is_suicide:
+                    for neighbor_stone in neighbor_stones:
+                        if neighbor_stone.color == self.next:
+                            if len(neighbor_stone.group.liberties) == 1:
+                                is_suicide = True
+                                break
+                if is_suicide:
+                    is_suicide_kill = False
+                    for neighbor_stone in neighbor_stones:
+                        if neighbor_stone.color != self.next:
+                            if len(neighbor_stone.group.liberties) == 1:
+                                is_suicide_kill = True
+                                break
+                    if not is_suicide_kill:
+                        self.illegal[e[0], e[1], next_color] = True
+        #print(np.argwhere(self.illegal))
+    
+    def update_map(self, point, color):
+        if color == BLACK:
+            self.map[point] = [1.0, 0.0]
+        if color == WHITE:
+            self.map[point] = [0.0, 1.0]
+    
+    def update_liberties(self, added_stone=None):
+        """Updates the liberties of the entire board, group by group.
+        Return None if it is a legal move, Return string "illegal" if not
 
+        Usually a stone is added each turn. To allow killing by 'suicide',
+        all the 'old' groups should be updated before the newly added one.
+
+        """
+        if added_stone:
+            if self.illegal[added_stone.point[0], added_stone.point[1], 0 if added_stone.color==BLACK else 1]:
+                added_stone.remove()
+                self.turn()
+                return "illegal"
+        for group in self.groups:
+            if added_stone:
+                if group == added_stone.group:
+                    continue
+            group.update_liberties()
+            if len(group.liberties) == 0:
+                if group.color == BLACK:
+                    self.b_catched += len(group.stones)
+                else:
+                    self.w_catched += len(group.stones)
+                group.remove()
+        self.update_illegal()
+    
     def search(self, point=None, points=[]):
         """Search the board for a stone.
 
@@ -171,3 +242,12 @@ class Board(object):
         else:
             self.next = BLACK
             return WHITE
+            
+    def clear(self):
+        while self.groups:
+            self.groups[0].remove()
+        self.groups = []
+        self.illegal.fill(False)
+        self.next = BLACK
+        self.b_catched = 0
+        self.w_catched = 0
