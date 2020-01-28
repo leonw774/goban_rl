@@ -33,12 +33,12 @@ MAX_STEP = 2*BOARD_SIZE**2
 B_WIN_REWARD = 1.0
 UNKNOWN_REWARD = 0.0
 W_WIN_REWARD = -1.0
-if BOARD_SIZE < 13:
-    KOMI = 0.5
-elif BOARD_SIZE < 19:
-    KOMI = 5.5
+if BOARD_SIZE <= 9:
+    KOMI = 0.75
+elif BOARD_SIZE <= 13:
+    KOMI = 3.75
 else:
-    KOMI = 7.5
+    KOMI = 6.5
 
 class Stone(go.Stone):
     def __init__(self, board, point, color, is_drawn = True):
@@ -166,7 +166,7 @@ def train():
                     reward = W_WIN_REWARD
                 model.record((x, y), pre_map, board.map, reward, True)
                 if epoch%20==0:
-                    print("epoch", epoch, "Black win rate:", black_win_count/epoch)
+                    print("epoch", epoch, "Black win rate:", black_win_count/(epoch+1))
                 break
             elif board.next != trainas:
                 model.record((x, y), pre_map, board.map, UNKNOWN_REWARD, False)
