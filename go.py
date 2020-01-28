@@ -90,7 +90,6 @@ class Group(object):
         self.board = board
         self.board.groups.append(self)
         self.stones = [stone]
-        self.liberties = None
 
     def merge(self, group):
         """Merge two groups.
@@ -119,7 +118,6 @@ class Group(object):
 
     def update_liberties(self):
         """Update the group's liberties.
-        Return the group's liberties, 0 if removed
         As this method will remove the entire group if no liberties can
         be found, it should only be called once per turn.
 
@@ -131,8 +129,6 @@ class Group(object):
         liberties = set(liberties)
         if len(liberties) == 0:
             self.remove()
-            return 0
-        return len(liberties)
 
     def __str__(self):
         """Return a list of the group's stones as a string."""

@@ -3,7 +3,6 @@ import go
 from keras import backend as K
 from keras import optimizers, losses
 from keras.models import Model, load_model
-#from keras.layers import Activation, BatchNormalization, Concatenate, Conv2D, Dense, Dropout, Flatten, LeakyReLU, MaxPooling2D
 from keras.layers import Activation, BatchNormalization, Concatenate, Conv2D, Dense, Dropout, Flatten, Input
 
 WHITE = (255, 255, 255)
@@ -11,16 +10,16 @@ BLACK = (0, 0, 0)
 
 GAMMA = 0.9982
 
-STEP_QUEUE_MAX_LENGTH = 10
+STEP_QUEUE_MAX_LENGTH = 100
 
-TRAIN_EPOCHS = 4
-TRAIN_EPOCHS_THRESHOLD = 8
-BATCH_SIZE = 4
+TRAIN_EPOCHS = 10
+TRAIN_EPOCHS_THRESHOLD = 20
+BATCH_SIZE = 8
 
-A_LEARNING_RATE = 10e-3
-A_LEARNING_RATE_DECAY = 0
-C_LEARNING_RATE = 10e-3
-C_LEARNING_RATE_DECAY = 0
+A_LR = 10e-4
+A_LR_DECAY = 10e-6
+C_LR = 10e-4
+C_LR_DECAY = 10e-6
 
 def softmax(_input, _temperature=1.0):
     if len(_input.shape) != 1:
@@ -64,34 +63,33 @@ class StepRecord() :
         
 
 class ActorCritic :
-    def __init__ (self, size, load_model_name) :    
+    def __init__ (self, size, load_model_file) :    
         self.actor = None
         self.critic = None
         self.step_records = [StepRecord()]
         self.size = size
         
-        if load_model_name:
-            self.actor = load_model("actor_" + load_model_name)
-            self.critic = load_model("critic_" + load_model_name)
+        if load_model_file:
+            self.actor = load_model("actor_" + load_model_file)
+            self.critic = load_model("critic_" + load_model_file)
         else :
             self.init_models(size)
             
-        self.actor_optimizer = optimizers.rmsprop(lr = A_LEARNING_RATE, decay = A_LEARNING_RATE_DECAY)
-        self.actor.compile(loss = "mse", optimizer = self.actor_optimizer)
+        self.a_optimizer = optimizers.rmsprop(lr = A_LR, decay = A_LR_DECAY)
+        self.actor.compile(loss = "mse", optimizer = self.a_optimizer)
 
-        self.critic_optimizer = optimizers.rmsprop(lr = C_LEARNING_RATE, decay = C_LEARNING_RATE_DECAY)
-        self.critic.compile(loss = "mse", optimizer = self.critic_optimizer)
+        self.c_optimizer = optimizers.rmsprop(lr = C_LR, decay = C_LR_DECAY)
+        self.critic.compile(loss = "mse", optimizer = self.c_optimizer)
     
     def init_models(self, size):
         input_map = Input((size, size, 2))
-        x1 = Conv2D(16, (size//2, size//2), strides=(2, 2), padding = "valid", activation = "relu")(input_map)
-        x1 = Conv2D(32, (3, 3), activation = "relu")(x1)
+        x1 = Conv2D(16, (size//3, size//3), strides=(2, 2), padding="valid", activation="relu")(input_map)
+        x1 = Conv2D(32, (3, 3), activation="relu")(x1)
         
-        x2 = Conv2D(16, ((size*3)//4, (size*3)//4), strides=(1, 1), padding = "valid", activation = "relu")(input_map)
-        x2 = Conv2D(32, (3, 3), activation = "relu")(x2)
+        x2 = Conv2D(16, ((size*2)//3, (size*2)//3), padding="valid", activation="relu")(input_map)
+        x2 = Conv2D(32, (3, 3), activation="relu")(x2)
         
-        x3 = Conv2D(16, (size-2, size-2), strides=(1, 1), padding = "valid", activation = "relu")(input_map)
-        x3 = Conv2D(32, (2, 2), activation = "relu")(x3)
+        x3 = Conv2D(32, (size, size), padding="valid", activation="relu")(input_map)
         
         x1 = Flatten()(x1)
         x2 = Flatten()(x2)
@@ -115,7 +113,8 @@ class ActorCritic :
         illegal = np.transpose(board.illegal[:, :, 0 if playas==BLACK else 1]).flatten()
         has_stone = np.transpose(np.max(board.map, axis=2)==1).flatten()
         not_placeable = np.logical_or(illegal, has_stone)
-        if len(np.where(not_placeable)) == board.size**2:
+        print(np.where(not_placeable)[0].shape[0])
+        if np.where(not_placeable)[0].shape[0] == board.size**2:
             return -1, -1, 0.0
         
         # white's goal is to make value low
@@ -144,13 +143,13 @@ class ActorCritic :
     def reward_normalization(self, x):
         return (x - x.mean()) / np.std(x)
 
-    def learn(self):
+    def learn(self, verbose=True):
         closs = 0; aloss = 0
         if len(self.step_records) < TRAIN_EPOCHS_THRESHOLD:
             return
         random_idxs = np.random.randint(len(self.step_records), size=TRAIN_EPOCHS)
         for idx in random_idxs:
-            rec_a, rec_os, rec_ns, rec_r, rec_is_terminal = self.step_records[idx].get_arrays()
+            rec_a, rec_os, rec_ns, rec_r, rec_terminal = self.step_records[idx].get_arrays()
             rec_r_norm = self.reward_normalization(rec_r)
             train_length = self.step_records[idx].length
             
@@ -161,7 +160,7 @@ class ActorCritic :
             new_r = self.critic.predict(rec_ns)
             old_r = self.critic.predict(rec_os)
             for i in range(train_length):
-                if rec_is_terminal[i]:
+                if rec_terminal[i]:
                     new_r[i, rec_a[i]] = rec_r[i]
                 else:
                     new_r[i, rec_a[i]] = rec_r[i] + new_r[i, rec_a[i]] * GAMMA
@@ -172,9 +171,8 @@ class ActorCritic :
             #print("advantages:", advantages)
             closs += self.critic.fit(rec_os, advantages, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
             aloss += self.actor.fit(rec_os, new_a, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
-        closs /= TRAIN_EPOCHS
-        aloss /= TRAIN_EPOCHS
-        print("avgcloss: %e, avgaloss: %e"%(closs, aloss))
+        if verbose:
+            print("avgcloss: %e, avgaloss: %e"%(closs/TRAIN_EPOCHS, aloss/TRAIN_EPOCHS))
         
     def save(self, save_weight_name) :
         self.actor.save("actor_" + save_weight_name)
