@@ -9,28 +9,18 @@ from keras.layers import Activation, BatchNormalization, Concatenate, Conv2D, De
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 
-GAMMA = 0.9982
+GAMMA = 0.9
 
-STEP_QUEUE_MAX_LENGTH = 100
+STEP_QUEUE_MAX_LENGTH = 200
 
-TRAIN_EPOCHS = 10
+TRAIN_EPOCHS = 4
 TRAIN_EPOCHS_THRESHOLD = 20
 BATCH_SIZE = 8
 
-A_LR = 10e-4
-A_LR_DECAY = 10e-6
-C_LR = 10e-4
-C_LR_DECAY = 10e-6
-
-def softmax(x, temperature=1.0):
-    x = x.astype("float64")
-    if len(x.shape) != 1:
-        print("softmax input must be 1-D numpy array")
-        return
-    return np.exp(x/temperature)/np.sum(np.exp(x/temperature))
-
-def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
+A_LR = 5e-4
+A_LR_DECAY = 1e-6
+C_LR = 5e-4
+C_LR_DECAY = 1e-6
 
 class StepRecord() :
     def __init__(self) :
@@ -88,27 +78,41 @@ class ActorCritic :
     
     def init_models(self, size):
         input_map = Input((size, size, 2))
-        x1 = Conv2D(16, (size//3, size//3), strides=(2, 2), padding="valid", activation="relu")(input_map)
-        x1 = Conv2D(32, (3, 3), activation="relu")(x1)
+        x1 = Conv2D(32, (size//3, size//3), strides=(2, 2), padding="valid", activation="relu")(input_map)
+        x1 = Conv2D(64, (size//9, size//9), activation="relu")(x1)
         
-        x2 = Conv2D(16, ((size*2)//3, (size*2)//3), padding="valid", activation="relu")(input_map)
-        x2 = Conv2D(32, (3, 3), activation="relu")(x2)
+        x2 = Conv2D(32, (size//2, size//2), padding="valid", activation="relu")(input_map)
+        x2 = Conv2D(64, (size//4, size//4), activation="relu")(x2)
         
-        x3 = Conv2D(32, (size, size), padding="valid", activation="relu")(input_map)
+        x3 = Conv2D(32, ((size*2)//3, (size*2)//3), padding="valid", activation="relu")(input_map)
+        x3 = Conv2D(64, ((size*4)//9, (size*4)//9), activation="relu")(x3)
         
         x1 = Flatten()(x1)
         x2 = Flatten()(x2)
         x3 = Flatten()(x3)
         #x = Concatenate()([x1, x2])
         x = Concatenate()([x1, x2, x3])
+        x = Dropout(0.2)(x)
         
-        shared = Dense(2*size**2, activation = "relu")(x)
+        shared = Dense(int(2*size**2), activation = "relu")(x)
+        shared = Dropout(0.2)(shared)
+        
         logits = Dense(size**2)(shared)
         self.actor = Model(input_map, logits)
 
         values = Dense(size**2)(shared)
         self.critic = Model(input_map, values)
         self.critic.summary()
+    
+    def softmax(self, x, temperature=1.0):
+        x = x.astype("float64")
+        if len(x.shape) != 1:
+            print("softmax input must be 1-D numpy array")
+            return
+        return np.exp(x/temperature)/np.sum(np.exp(x/temperature))
+
+    def sigmoid(self, x):
+        return 1 / (1 + np.exp(-x))
     
     def decide_random(self, board, temperature=1.0):
         playas = board.next
@@ -129,7 +133,7 @@ class ActorCritic :
 
         # astype("float64") because numpy's multinomial convert array to float64 after pval.sum()
         # sometime the sum exceed 1.0 due to numerical rounding
-        instinct = softmax(logits, temperature)
+        instinct = self.softmax(logits, temperature)
         act = np.argmax(np.random.multinomial(1, instinct, 1))
         return act%self.size, act//self.size, instinct[act]
     
@@ -139,7 +143,7 @@ class ActorCritic :
         illegal = np.transpose(board.illegal[:, :, 0 if playas==BLACK else 1]).flatten()
         has_stone = np.transpose(np.max(board.map, axis=2)==1).flatten()
         unplaceable = np.logical_or(illegal, has_stone)
-        if np.where(unplaceable)[0].shape[0] == board.size**2:
+        if np.where(unplaceable)[0].shape[0] == self.size**2:
             return -1, -1, 0.0
         
         logits = np.squeeze(self.actor.predict(np.expand_dims(board.map, axis=0)))
@@ -152,8 +156,8 @@ class ActorCritic :
         # just a big negtive number
         logits[unplaceable] = -10e6
         
-        win_rate = sigmoid(values)
-        instinct = softmax(logits, temperature)
+        win_rate = self.sigmoid(values)
+        instinct = self.softmax(logits, temperature)
         
         if depth<1:
             act = np.argmax(win_rate)
@@ -173,8 +177,11 @@ class ActorCritic :
             act = candidates[np.argmax(searched_win_rate)]
         return act%self.size, act//self.size, instinct[act], win_rate[act]
     
-    def get_value(self, boardmap):
-        return self.critic.predict(np.expand_dims(boardmap, axis=0))[0]
+    def get_winrates(self, boardmap):
+        return self.sigmoid(self.critic.predict(np.expand_dims(boardmap, axis=0))[0])
+        
+    def get_instincts(self, boardmap):
+        return self.softmax(self.actor.predict(np.expand_dims(boardmap, axis=0))[0])
     
     def record(self, point, old_map, new_map, reward, is_terminal):
         self.step_records[-1].add(point[0]+point[1]*self.size, old_map, new_map, reward, is_terminal)
@@ -209,14 +216,12 @@ class ActorCritic :
                 else:
                     new_r[i, rec_a[i]] = rec_r[i] + new_r[i, rec_a[i]] * GAMMA
                 advantages[i, rec_a[i]] = new_r[i, rec_a[i]] - old_r[i, rec_a[i]]
-            
-            new_a = self.actor.predict(rec_os)
-            new_a = new_a + advantages 
             #print("advantages:", advantages)
+            new_a = self.actor.predict(rec_os) + advantages 
             closs += self.critic.fit(rec_os, advantages, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
             aloss += self.actor.fit(rec_os, new_a, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
         if verbose:
-            print("avgcloss: %e, avgaloss: %e"%(closs/TRAIN_EPOCHS, aloss/TRAIN_EPOCHS))
+            print("avg_c_loss: %e, avg_a_loss: %e"%(closs/TRAIN_EPOCHS, aloss/TRAIN_EPOCHS))
         
     def save(self, save_weight_name) :
         self.actor.save("actor_" + save_weight_name)

@@ -15,7 +15,7 @@ from sys import exit
 parser = argparse.ArgumentParser()
 parser.add_argument("--epochs", "-e", default=1000, type=int)
 parser.add_argument("--size", "-s", dest="size", default=19, type=int)
-parser.add_argument("--use-model", dest="use_model", type=str, default="", action="store")
+parser.add_argument("--use-model", "-m", dest="use_model", type=str, default="", action="store")
 parser.add_argument("--test", type=str, default="", action="store")
 args = parser.parse_args()
 EPOCHS = args.epochs
@@ -30,11 +30,11 @@ GRID_SIZE = 20
 DRAW_BOARD_SIZE = (GRID_SIZE * BOARD_SIZE + 20, GRID_SIZE * BOARD_SIZE + 20)
 
 MAX_STEP = 2*BOARD_SIZE**2
-B_WIN_REWARD = 1.0
+B_WIN_REWARD = 10e2
 UNKNOWN_REWARD = 0.0
-W_WIN_REWARD = -1.0
+W_WIN_REWARD = -B_WIN_REWARD
 if BOARD_SIZE <= 9:
-    KOMI = 0.75
+    KOMI = 0.5
 elif BOARD_SIZE <= 13:
     KOMI = 3.75
 else:
@@ -63,17 +63,12 @@ class Stone(go.Stone):
             area_rect = pygame.Rect(blit_coords, (20, 20))
             screen.blit(background, blit_coords, area_rect)
             pygame.display.update()
-        self.board.map[self.point] = [0.0, 0.0]
         super(Stone, self).remove()
 
         
 class Board(go.Board):
     def __init__(self, size, is_drawn=True):
         """Create, initialize and map an empty board.
-        map is a numpy array representation of the board
-        empty = (0, 0)
-        black = (1, 0)
-        white = (0, 1)
         """
         self.is_drawn = is_drawn
         super(Board, self).__init__(size)
@@ -83,22 +78,16 @@ class Board(go.Board):
     
     def is_gameover(self, pass_count=0):
         """ Return winner if game is over, Return None if not"""
-        empty_count = 0
-        b_count = 0
-        w_count = KOMI
-        for i in range(self.size):
-            for j in range(self.size):
-                if np.max(board.map[i, j]) == 0:
-                    empty_count += 1
-                else:
-                    b_count += board.map[i, j][0]
-                    w_count += board.map[i, j][1]
+        b = np.sum(board.map[:, :, 0])
+        w = np.sum(board.map[:, :, 1])
+        empty = self.size*self.size - b_count - w_count
+        w += KOMI
 
-        if empty_count-np.argwhere(self.illegal).shape[0]<=3 or pass_count==2:
-            return BLACK if (b_count+self.w_catched*0.5 >= w_count+self.b_catched*0.5) else WHITE
-        elif (b_count+self.w_catched*0.5 - w_count+self.b_catched*0.5) > 60:
+        if (empty-np.argwhere(self.illegal).shape[0]) <= (3*(self.size//6)) or pass_count==2:
+            return BLACK if (b+self.w_catched*0.5 >= w+self.b_catched*0.5) else WHITE
+        elif (b+self.w_catched*0.5 - w+self.b_catched*0.5) > (self.size**2)/3:
             return BLACK
-        elif (b_count+self.w_catched*0.5 - w_count+self.b_catched*0.5) < -60:
+        elif (b+self.w_catched*0.5 - w+self.b_catched*0.5) < -(self.size**2)/3:
             return WHITE
         else:
             return None
@@ -119,12 +108,12 @@ class Board(go.Board):
         self.outline.inflate_ip(GRID_SIZE, GRID_SIZE)
         for i in range(self.size-1):
             for j in range(self.size-1):
-                rect = pygame.Rect(25 + (GRID_SIZE * i), 25 + (GRID_SIZE * j), GRID_SIZE, GRID_SIZE)
+                rect = pygame.Rect(25+(GRID_SIZE*i), 25+(GRID_SIZE*j), GRID_SIZE, GRID_SIZE)
                 pygame.draw.rect(background, BLACK, rect, 1)
         if self.size == 19:
             for i in range(3):
                 for j in range(3):
-                    coords = (85 + (120 * i), 85 + (120 * j))
+                    coords = (85+(120*i), 85+(120*j))
                     pygame.draw.circle(background, BLACK, coords, 5, 0)
         screen.blit(background, (0, 0))
         pygame.display.update()
@@ -132,19 +121,19 @@ class Board(go.Board):
 def train():
     MAX_TEMPERATURE = 10.0
     MIN_TEMPERATURE = 0.1
-    TEMPERATURE = MAX_TEMPERATURE
-    TEMPERATURE_DECAY = (MIN_TEMPERATURE/TEMPERATURE) ** (EPOCHS/2)
+    TEMPERATURE_DECAY = (MIN_TEMPERATURE/MAX_TEMPERATURE) ** (EPOCHS/2)
+    PRINT_INTV = 100
+    temperature = MAX_TEMPERATURE
     black_win_count = 0
     for epoch in range(EPOCHS*2):
         steps = 0
         pass_count = 0
         # only record as one side because white has "less steps" adventage
-        trainas = (BLACK, WHITE)[epoch%2]
         while (steps < MAX_STEP):
             try_steps = 0
             while (try_steps < MAX_STEP - steps):
                 pre_map = board.map
-                x, y, instinct = model.decide_random(board, TEMPERATURE)
+                x, y, instinct = model.decide_random(board, temperature)
                 if x==-1 and y==-1:
                     pass_count += 1
                     board.turn()
@@ -165,28 +154,35 @@ def train():
                 else:
                     reward = W_WIN_REWARD
                 model.record((x, y), pre_map, board.map, reward, True)
-                if epoch%20==0:
+                if epoch%PRINT_INTV==0:
                     print("epoch", epoch, "Black win rate:", black_win_count/(epoch+1))
                 break
-            elif board.next != trainas:
+            else:
                 model.record((x, y), pre_map, board.map, UNKNOWN_REWARD, False)
             steps += 1
         # end while game
         board.clear()
-        model.learn(verbose=(epoch%20==0))
+        model.learn(verbose=(epoch%PRINT_INTV==0))
         model.add_record()
-        if epoch>1 and epoch%20==0:
+        temperature = max(MIN_TEMPERATURE, temperature*TEMPERATURE_DECAY)
+        if epoch>1 and epoch%PRINT_INTV==0:
             model.save("model.h5")
-            TEMPERATURE = max(MIN_TEMPERATURE, TEMPERATURE*TEMPERATURE_DECAY)
 
 def test(ai_play_as):
     print("begin test")
     print("use model:", args.use_model)
-    print("value:", model.get_value(board.map))
+    print("win rate:", model.get_winrates(board.map))
+    print("instinct:", model.get_instincts(board.map))
     while True:
         pygame.time.wait(250)
+        old_board = board.map
+        x = -1
+        y = -1
         if ai_play_as == board.next:
-            old_board = board.map
+            winner = board.is_gameover()
+            if winner:
+                print("winner is", "B" if winner==BLACK else "W")
+                break
             x, y, instinct, win_rate = model.decide_tree_search(board, temperature=0.01, depth=2, kth=4)
             if x==-1 and y==-1:
                 print("model passes")
@@ -197,17 +193,17 @@ def test(ai_play_as):
             if board.search(point=(x, y)) != []:
                 continue
             added_stone = Stone(board, (x, y), board.turn())
-            # if is suicide
-            if board.update_liberties(added_stone) == "illegal":
-                continue
-            print("value:", model.get_value(old_board)[x+BOARD_SIZE*y])
+            board.update_liberties(added_stone)
+            winner = board.is_gameover()
+            if winner:
+                print("winner is", "B" if winner==BLACK else "W")
+                break
         else:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     exit()
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1 and board.outline.collidepoint(event.pos):
-                        old_board = board.map
                         x = int(round(((event.pos[0] - 25) / GRID_SIZE), 0))
                         y = int(round(((event.pos[1] - 25) / GRID_SIZE), 0))
                         #print(x, y)
@@ -215,8 +211,11 @@ def test(ai_play_as):
                             continue
                         added_stone = Stone(board, (x, y), board.turn())
                         board.update_liberties(added_stone)
-                    print("player choose (%d, %d)"%(x, y))
-                    print("win rate:%0.3f"%win_rate, "value:", model.get_value(old_board)[x+BOARD_SIZE*y]) 
+                        print("player choose (%d, %d)"%(x, y))
+                        win_rate = model.get_winrates(old_board)[x+BOARD_SIZE*y]
+                        instinct = model.get_instincts(old_board)[x+BOARD_SIZE*y]
+                        print("instinct:%.4e win rate:%.3f"%(instinct, win_rate))
+    # end while True
 
 if __name__ == '__main__':
     model = playmodel.ActorCritic(BOARD_SIZE, args.use_model)

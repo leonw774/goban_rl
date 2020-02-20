@@ -32,6 +32,7 @@ class Stone(object):
     
     def remove(self):
         """Remove the stone from board."""
+        self.board.map[self.point] = [0.0, 0.0]
         self.group.stones.remove(self)
         del self
 
@@ -140,7 +141,9 @@ class Board(object):
         """Create and initialize an empty board."""
         self.groups = []
         self.size = size
-        self.map = np.zeros((self.size, self.size, 2))
+        # map is a numpy array representation of the board
+        # empty = (0, 0) black = (1, 0) white = (0, 1)
+        self.map = np.zeros((self.size, self.size, 2)) 
         self.illegal = np.full((self.size, self.size, 2), False)
         self.b_catched = 0
         self.w_catched = 0
