@@ -11,231 +11,204 @@ Edited by leow774 for keras ai training
 __author__ = "Aku Kotkavuo <aku@hibana.net>"
 __version__ = "0.1"
 
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
+BLACK = 0
+WHITE = 1
+COLOR = ((0, 0, 0), (255, 255, 255))
 
 class Stone(object):
-    def __init__(self, board, point, color):
-        """Create and initialize a stone.
-
-        Arguments:
-        board -- the board which the stone resides on
-        point -- location of the stone as a tuple, e.g. (3, 3)
-                 represents the upper left hoshi
-        color -- color of the stone
-
-        """
-        self.board = board
+    def __init__(self, board, point):
+        """Create and initialize a stone."""
         self.point = point
+        self.color = board.next
+        self.islegal = board.add_stone(point)
+        
+class Group:
+    def __init__(self, stones, color):
+        self.id = np.random.randint(2147483647)
+        self.stones = set(stones) # stones = tuple(x, y)
         self.color = color
-        self.group = self.find_group()
+
+    def is_neighbor(self, request_point):
+        for p in self.stones:
+            if (abs(p[0] - request_point[0]) + abs(p[1] - request_point[1]) == 1):
+                return True
+        return False
+
+    def __hash__(self):
+        return hash((self.id, self.color))
+
+    # def __eq__(self, other):
+    #     return self.id == other.id and self.stones == other.stones and self.color == other.color
     
-    def remove(self):
-        """Remove the stone from board."""
-        self.board.map[self.point] = [0.0, 0.0]
-        self.group.stones.remove(self)
-        del self
-
-    @property
-    def neighbors(self):
-        """Return a list of neighboring points."""
-        neighborings = [(self.point[0] - 1, self.point[1]),
-                       (self.point[0] + 1, self.point[1]),
-                       (self.point[0], self.point[1] - 1),
-                       (self.point[0], self.point[1] + 1)]
-        neighborings = [n for n in neighborings if ((0<=n[0]<self.board.size) and (0<=n[1]<self.board.size))]
-        return neighborings
-
-    @property
-    def liberties(self):
-        """Find and return the liberties of the stone."""
-        neighbors = self.neighbors
-        liberties = []
-        for neighbor in neighbors:
-            if np.max(self.board.map[neighbor[0], neighbor[1]]) == 0:
-                liberties.append(neighbor)
-        return liberties
-
-    def find_group(self):
-        """Find or create a group for the stone."""
-        groups = []
-        stones = self.board.search(points=self.neighbors)
-        for stone in stones:
-            if stone.color == self.color and stone.group not in groups:
-                groups.append(stone.group)
-        if not groups:
-            group = Group(self.board, self)
-            return group
-        else:
-            if len(groups) > 1:
-                for group in groups[1:]:
-                    groups[0].merge(group)
-            groups[0].stones.append(self)
-            return groups[0]
-
     def __str__(self):
-        """Return the location of the stone, e.g. 'D17'."""
-        return 'ABCDEFGHJKLMNOPQRST'[self.point[0]] + str(self.board.size-(self.point[1]))
+        return "id " + str(self.id) + ", color " + str(self.color) + ", coord " + str([str(p) for p in self.stones])
 
-
-class Group(object):
-    def __init__(self, board, stone):
-        """Create and initialize a new group.
-
-        Arguments:
-        board -- the board which this group resides in
-        stone -- the initial stone in the group
-
-        """
-        self.board = board
-        self.board.groups.append(self)
-        self.stones = [stone]
-        self.color = stone.color
-        self.liberties = None
-        self.update_liberties()
-
-    def merge(self, group):
-        """Merge two groups.
-
-        This method merges the argument group with this one by adding
-        all its stones into this one. After that it removes the group
-        from the board.
-
-        Arguments:
-        group -- the group to be merged with this one
-
-        """
-        for stone in group.stones:
-            stone.group = self
-            self.stones.append(stone)
-        self.board.groups.remove(group)
-        del group
-
-    def remove(self):
-        """Remove the entire group."""
-        while self.stones:
-            self.stones[0].remove()
-        if self in self.board.groups:
-            self.board.groups.remove(self)
-        del self
+def nbpoints(point, limit):
+    nblist = []
+    if point[1] - 1 >= 0:
+        nblist.append((point[0], point[1] - 1))
+    if point[0] - 1 >= 0:
+        nblist.append((point[0] - 1, point[1]))
+    if point[1] + 1 < limit:
+        nblist.append((point[0], point[1] + 1))
+    if point[0] + 1 < limit:
+        nblist.append((point[0] + 1, point[1]))
+    return nblist
     
-    def update_liberties(self):
-        """Update the group's liberties.
-        As this method will NOT remove the entire group if no liberties can
-        be found. The removal is now handled in Board.update_liberties
-
-        """
-        liberties = []
-        for stone in self.stones:
-            for liberty in stone.liberties:
-                liberties.append(liberty)
-        self.liberties = set(liberties)
-
-    def __str__(self):
-        """Return a list of the group's stones as a string."""
-        return str([str(stone) for stone in self.stones])
-
+# end def nbpoints
 
 class Board(object):
-    def __init__(self, size):
+    def __init__(self, size, komi, is_debug=False):
         """Create and initialize an empty board."""
-        self.groups = []
+        # grid is a numpy array representation of the board
+        # empty = (0, 0) black = (True, 0) white = (0, 1)
         self.size = size
-        # map is a numpy array representation of the board
-        # empty = (0, 0) black = (1, 0) white = (0, 1)
-        self.map = np.zeros((self.size, self.size, 2)) 
-        self.illegal = np.full((self.size, self.size, 2), False)
-        self.b_catched = 0
-        self.w_catched = 0
+        self.komi = komi
+        self.grid = np.zeros((self.size, self.size, 2))
+        self.groups = set()
+        
+        self.b_captured = 0
+        self.w_captured = 0
         self.next = BLACK
-    
+        self.log = [] # (color, point, board_hash)
+
+        self.same_state_illegal = set()
+        self.suicide_illegal = set()
+
+        self.zobrist_init = np.random.randint(9223372036854775807, dtype=np.int64) # 2^63 - 1
+        self.zobrist_table = np.random.randint(9223372036854775807, size=(self.size, self.size, 2), dtype=np.int64)
+        self.outputDebug = is_debug
+
+    def zobrist_hash(self):
+        zhash = self.zobrist_init
+        for i in range(self.size):
+            for j in range(self.size):
+                if self.grid[i, j, 0] == 1:
+                    zhash ^= self.zobrist_table[i, j, 0]
+                elif self.grid[i, j, 1] == 1:
+                    zhash ^= self.zobrist_table[i, j, 1]
+        return zhash
+
     def has_stone(self, point):
-        return np.max(self.map[point]) == 1
-    
-    def update_illegal(self):
-        empty_points = np.argwhere(np.max(self.map, axis=2)==0)
-        next_color = 0 if self.next == BLACK else 1
-        self.illegal[:, :, next_color] = False
-        for e in empty_points:
-            neighbors = [(e[0] - 1, e[1]),
-                         (e[0] + 1, e[1]),
-                         (e[0], e[1] - 1),
-                         (e[0], e[1] + 1)]
-            neighbors = [n for n in neighbors if ((0<=n[0]<self.size) and (0<=n[1]<self.size))]
-            
-            if all([self.has_stone(x) for x in neighbors]):
-                neighbor_stones = self.search(points=neighbors)
-                # suicide: made itself killed or made neighboring same color stone killed
-                is_suicide = all([neighbor_stone.color != self.next for neighbor_stone in neighbor_stones])
-                if not is_suicide:
-                    for neighbor_stone in neighbor_stones:
-                        if neighbor_stone.color == self.next:
-                            if len(neighbor_stone.group.liberties) == 1:
-                                is_suicide = True
-                                break
-                if is_suicide:
-                    is_suicide_kill = False
-                    for neighbor_stone in neighbor_stones:
-                        if neighbor_stone.color != self.next:
-                            if len(neighbor_stone.group.liberties) == 1:
-                                is_suicide_kill = True
-                                break
-                    if not is_suicide_kill:
-                        self.illegal[e[0], e[1], next_color] = True
-        #print(np.argwhere(self.illegal))
-    
-    def update_map(self, point, color):
+        return max(self.grid[point]) == 1
+        
+    def update_grid(self, point, color=None):
         if color == BLACK:
-            self.map[point] = [1.0, 0.0]
-        if color == WHITE:
-            self.map[point] = [0.0, 1.0]
+            self.grid[point[0], point[1], BLACK] = 1
+        elif color == WHITE:
+            self.grid[point[0], point[1], WHITE] = 1
+        else:
+            self.grid[point] = [0, 0]
     
-    def update_liberties(self, added_stone=None):
-        """Updates the liberties of the entire board, group by group.
-        Return None if it is a legal move, Return string "illegal" if not
-
-        Usually a stone is added each turn. To allow killing by 'suicide',
-        all the 'old' groups should be updated before the newly added one.
-
+    def handle_same_state_illegal(self, adding_point):
         """
-        if added_stone:
-            if self.illegal[added_stone.point[0], added_stone.point[1], 0 if added_stone.color==BLACK else 1]:
-                added_stone.remove()
-                self.turn()
-                return "illegal"
-        for group in self.groups:
-            if added_stone:
-                if group == added_stone.group:
-                    continue
-            group.update_liberties()
-            if len(group.liberties) == 0:
-                if group.color == BLACK:
-                    self.b_catched += len(group.stones)
-                else:
-                    self.w_catched += len(group.stones)
-                group.remove()
-        self.update_illegal()
+        points in "same_state_illegal" should be removed after a successful add_stone() try  
+        if adding_point is None: remove points  
+        else: add point
+        """
+        if adding_point:
+            self.same_state_illegal.add(adding_point)
+        else:
+            self.same_state_illegal = set()
+
+    def handle_suicide_illegal(self, adding_point):
+        """
+        points in "suicide_illegal" should be removed if a stone is on that point
+        """
+        self.suicide_illegal = set([p for p in self.suicide_illegal if max(self.grid[p]) == 0])
+        if adding_point:
+            self.suicide_illegal.add(adding_point)
+
+    def check_legal(self, new_point, new_group, nb_enemy_groups):
+        """
+        return (new_group is killed IMPLY kill other) AND (NOT same board state)
+        """
+        # check suiside move
+        killed_nb_enemy_group = set()
+        # only want to know if enemy ki == 0
+        for nbeg in nb_enemy_groups:
+            is_alive = False
+            for s in nbeg.stones:
+                for nbp in nbpoints(s, self.size):
+                    if max(self.grid[nbp]) == 0: # has no stone
+                        is_alive = True
+                        break
+                if is_alive: break
+            if not is_alive:
+                killed_nb_enemy_group.add(nbeg)
+        
+        is_suicide = True
+        for p in new_group.stones:
+            for nbp in nbpoints(p, self.size):
+                if not self.has_stone(nbp):
+                    is_suicide = False
+                    break
+            if not is_suicide: break
+
+        if is_suicide and len(killed_nb_enemy_group) == 0:
+            self.handle_suicide_illegal(new_point)
+            if self.outputDebug:
+                print("illegal: suisidal move")
+            return False
+        
+        # temporary take off "dead" stones from grid to see if that would make same state
+        for dead_nbeg in killed_nb_enemy_group:
+            for s in dead_nbeg.stones:
+                self.update_grid(s, None)
+        # check latest previous 6 board state (preventing n-ko rotation, n <= 3)
+        same_state_rewind_limit = 6
+        same_state_rewind_num = 0
+        same_state = False
+        zhash = self.zobrist_hash()
+        for entry in reversed(self.log):
+            if entry[2] == zhash and entry[2] != -1: # -1 means it was passed: no same state check require
+                same_state = True
+                break
+            same_state_rewind_num += 1
+            if same_state_rewind_num >= same_state_rewind_limit: break
+        # recover grid
+        for dead_nbeg in killed_nb_enemy_group:
+            for s in dead_nbeg.stones:
+                self.update_grid(s, dead_nbeg.color)
+        
+        if same_state:
+            self.handle_same_state_illegal(new_point)
+            if self.outputDebug:
+                print("illegal: same board state")
+            return False
+        
+        self.handle_same_state_illegal(None)
+        self.handle_suicide_illegal(None)
+        return True
+    # end def check_legal
     
-    def search(self, point=None, points=[]):
-        """Search the board for a stone.
-
-        The board is searched in a linear fashion, looking for either a
-        stone in a single point (which the method will immediately
-        return if found) or all stones within a group of points.
-
-        Arguments:
-        point -- a single point (tuple) to look for
-        points -- a list of points to be searched
-
-        """
-        stones = []
-        for group in self.groups:
-            for stone in group.stones:
-                if stone.point == point and not points:
-                    return stone
-                if stone.point in points:
-                    stones.append(stone)
-        return stones
+    def update_capture(self, new_group):
+        # remove dead groups
+        dead_groups = set()
+        for g in self.groups:
+            is_alive = False
+            for p in g.stones:
+                for nbp in nbpoints(p, self.size):
+                    if max(self.grid[nbp]) == 0: # has no stone
+                        is_alive = True
+                        break
+                if is_alive:
+                    break
+            if (not is_alive) and (g != new_group):
+                dead_groups.add(g)
+        
+        for dg in dead_groups:
+            if dg.color == WHITE:
+                self.w_captured += len(dg.stones)
+            else:
+                self.b_captured += len(dg.stones)
+            for s in dg.stones:
+                self.update_grid(s, None)
+        self.groups = self.groups - dead_groups
+    
+    def pass_move(self):
+        self.log.append((self.next, "pass", -1))
+        self.turn()
 
     def turn(self):
         """Keep track of the turn by flipping between BLACK and WHITE."""
@@ -245,12 +218,215 @@ class Board(object):
         else:
             self.next = BLACK
             return WHITE
-            
+    
+    def add_stone(self, point):
+        """
+        2 possibility:
+          - link up with one or more group
+          - standalone
+        return true if successfully add a stone in a legal place  
+               false if not success  
+        """
+        if self.has_stone(point):
+            return False
+        self.update_grid(point, self.next)
+
+        # record nbGroupsId
+        nb_friend_groups = set()
+        nb_enemy_groups = set()
+        for g in self.groups:
+            if g.is_neighbor(point):
+                if g.color == self.next:
+                    nb_friend_groups.add(g)
+                else:
+                    nb_enemy_groups.add(g)
+
+        # create a temporary stone group from the adding stone
+        # because we didn't check legality yet
+        new_group_stones = set([point])
+        # merge neighbor groups into self temp group
+        for nbfg in nb_friend_groups:
+            new_group_stones = new_group_stones.union(nbfg.stones)
+        new_group = Group(new_group_stones, self.next)
+        self.groups.add(new_group)
+        
+        legal = self.check_legal(point, new_group, nb_enemy_groups)
+        if (not legal):
+            # delete temp adding group
+            self.groups.remove(new_group)
+            self.update_grid(point, None)
+            return False
+
+        self.groups = self.groups - nb_friend_groups # set difference
+        self.update_capture(new_group)
+        self.log.append((self.next, point, self.zobrist_hash()))
+        self.turn()
+        if self.outputDebug: self.debugPrint()
+        return True
+
+    def log_endgame(self, winner, reason):
+        self.log.append((winner, reason, -1))
+
     def clear(self):
-        while self.groups:
-            self.groups[0].remove()
-        self.groups = []
-        self.illegal.fill(False)
+        self.groups = set()
+        self.grid = np.zeros((self.size, self.size, 2))
         self.next = BLACK
-        self.b_catched = 0
-        self.w_catched = 0
+        self.log = []
+        self.b_captured = 0
+        self.w_captured = 0
+    
+    def debugPrint(self):
+        print("all groups:")
+        for g in self.groups:
+            print(g)
+        print("recorded illegal points:", )
+        print("same board illegal:", self.same_state_illegal)
+        print("suicide illegal:", self.suicide_illegal)
+        print("latset stone added", self.log[-1])
+
+    def score(self, output=False):
+        """
+        1. check life & dead of every group
+        2. count territory controlled by every living group
+        3. Chinese scoring rule: score = living friendly stones + territory + captured + dead enemy stones + komi(6.5) if white
+        - Life & Dead:
+            - inner liberty: an inner liberty of a group is a liberty enclosed by:
+                - same color group's stone
+                - edges of the board
+            - outer liberty: otherwise, a liberty of a group is an outer liberty
+            - if a group has more than two inner liberty, this group is alive
+        - Territory:
+            - a color's territorys is enclosed by at most 4 line far away of:
+                - all same color's living stones
+                - edges of the board
+        """
+        directions = [(0, -1), (-1, 0), (0, 1), (1, 0)]
+        b_living_stones = set()
+        w_living_stones = set()
+        b_dead_stones = set()
+        w_dead_stones = set()
+        public_outlibs = set()
+        for i, g in enumerate(self.groups):
+            inlib = set()
+            for s in g.stones:
+                for nbp in nbpoints(s, self.size):
+                    if nbp in public_outlibs: continue
+                    if (not self.has_stone(nbp)): # is liberty
+                        is_inner = True
+                        for n in range(4): # 4-direction
+                            encsearch = (nbp[0] + directions[n][0], nbp[1] + directions[n][1])
+                            while (0 <= encsearch[0] < self.size) and (0 <= encsearch[1] < self.size):
+                                if (self.grid[encsearch][(g.color+1)%2] == 1): # find enemy stone
+                                    #print(encsearch, "is enemy color,", nbp, "is outer lib")
+                                    is_inner = False
+                                    break
+                                if (self.grid[encsearch][g.color] == 1): # find friendly stone
+                                    break
+                                encsearch = (encsearch[0] + directions[n][0], encsearch[1] + directions[n][1])
+                            if not is_inner:
+                                public_outlibs.add(nbp)
+                                break
+                        # end for: 4-direction enclosure search
+                        if is_inner:
+                            inlib.add(nbp)
+                            #print(nbp, "is inner lib")
+                    # end if is liberty
+                # end for nbpoints
+            # end for group points
+            if len(inlib) >= 2:
+                if g.color == BLACK:
+                    b_living_stones = b_living_stones.union(g.stones)
+                else:
+                    w_living_stones = w_living_stones.union(g.stones)
+            else:
+                if g.color == BLACK:
+                    b_dead_stones = b_dead_stones.union(g.stones)
+                else:
+                    w_dead_stones = w_dead_stones.union(g.stones)
+        # end for: find living & dead groups 
+        
+        # for all open points determine whose territory it belongs to:
+        b_territory = set()
+        w_territory = set()
+        for i in range(self.size):
+            for j in range(self.size):
+                if (max(self.grid[i, j]) == 0): # has no stone
+                    p = (i, j)
+                    belonging = None
+                    NEUTRAL = 2
+                    for n in range(4): # 4-direction
+                        encsearch = (p[0] + directions[n][0], p[1] + directions[n][1])
+                        distance = 0 # limit is 4
+                        while (0 <= encsearch[0] < self.size) and (0 <= encsearch[1] < self.size):
+                            # if encsearch in b_territory:
+                            #     belonging = BLACK
+                            #     break
+                            if encsearch in b_living_stones:
+                                if belonging == BLACK or belonging == None:
+                                    belonging = BLACK
+                                else:
+                                    belonging = NEUTRAL
+                                break
+                            # if encsearch in w_territory:
+                            #     belonging = WHITE
+                            #     break
+                            if encsearch in w_living_stones:
+                                if belonging == WHITE or belonging == None:
+                                    belonging = WHITE
+                                else:
+                                    belonging = NEUTRAL
+                                break
+                            encsearch = (encsearch[0] + directions[n][0], encsearch[1] + directions[n][1])
+                            distance = distance + 1
+                            if distance >= 4:
+                                break
+                        # end while: enclosure search
+                        if belonging == NEUTRAL:
+                            break
+                    # end for: 4-direction enclosure search
+                    if belonging == BLACK:
+                        b_territory.add(p)
+                    elif belonging == WHITE:
+                        w_territory.add(p)
+        # end double for: every open points
+        
+        # score = living friendly stones + territory + captured + dead enemy stones + komi(6.5) if white
+        # w_score = len(w_living_stones) + len(w_territory) + len(b_dead_stones) + self.b_captured + self.komi
+        # b_score = len(b_living_stones) + len(b_territory) + len(w_dead_stones) + self.w_captured
+
+        # score = stones on board + territory + captured + komi(6.5) if white
+        w_score = np.sum(self.grid[:,:,WHITE]==1) + len(w_territory) + + self.b_captured + self.komi    
+        b_score = np.sum(self.grid[:,:,BLACK]==1) + len(b_territory) + + self.w_captured
+
+        output_str = ""
+        # draw territory result on as string
+        for i in range(self.size):
+            for j in range(self.size):
+                p = (j, i)
+                if p in w_territory:
+                    output_str += "c "
+                elif p in b_territory:
+                    output_str += "v "
+                elif p in w_living_stones:
+                    output_str += "O "
+                elif p in w_dead_stones:
+                    output_str += "O " 
+                elif p in b_living_stones:
+                    output_str += "X "
+                elif p in b_dead_stones:
+                    output_str += "X "
+                else:
+                    output_str += "  "
+            output_str += "\n"
+        output_str += "B:" + str(b_score) + " W:" + str(w_score) + (" B" if b_score > w_score else " W") + " win"
+
+        if output:
+            print(output_str)
+        
+        if b_score > w_score:
+            winner = BLACK
+        else:
+            winner = WHITE
+        return winner, b_score, w_score, output_str
+    # end def cal_score
+# end class Board

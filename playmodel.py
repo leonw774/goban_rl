@@ -4,44 +4,66 @@ from copy import copy, deepcopy
 from keras import backend as K
 from keras import optimizers, losses
 from keras.models import Model, load_model
-from keras.layers import Activation, BatchNormalization, Concatenate, Conv2D, Dense, Dropout, Flatten, Input
+from keras.layers import Activation, BatchNormalization, Concatenate, Conv2D, Dense, Dropout, Flatten, Input, Reshape
+#import tensorflow as tf
+#tf.compat.v1.disable_eager_execution()
 
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
+WHITE = go.WHITE
+BLACK = go.BLACK
 
 GAMMA = 0.9
 
-STEP_QUEUE_MAX_LENGTH = 200
+STEP_QUEUE_MAX_LENGTH = 100
 
-TRAIN_EPOCHS = 4
-TRAIN_EPOCHS_THRESHOLD = 20
+TRAIN_RECORDS = 8
+TRAIN_RECORDS_THRESHOLD = 40
 BATCH_SIZE = 8
 
-A_LR = 5e-4
-A_LR_DECAY = 1e-6
-C_LR = 5e-4
-C_LR_DECAY = 1e-6
+A_LR = 1e-4
+A_LR_DECAY = 0
+C_LR = 1e-3
+C_LR_DECAY = 0
 
-class StepRecord() :
-    def __init__(self) :
+def actor_loss(a_true, y_pred):
+    # a_true: shape=(action_size + 1)
+    # a_true[:,0] = tderror; a_true[:,1:] = rec_a (one-hot-ed)
+    action_weight = K.sum(a_true[:,1:] * y_pred, axis=1)
+    return -(K.log(action_weight + K.epsilon())) * a_true[:,0]
+
+def critic_loss(new_v, y_pred):
+    # y_true is new_v
+    return K.mean(K.square(new_v - y_pred), axis=-1)
+
+class StepRecord():
+    def __init__(self, player=None):
+        self.player = player
         self.actions = []
-        self.old_states = []
-        self.new_states = []
+        self.old_state = []
+        self.old_state_value = []
+        self.new_state = []
         self.rewards = []
-        self.is_terminals = []
     
-    def add(self, action, old_states, new_states, reward, is_terminal) :
-        self.actions.append(action)
-        self.old_states.append(old_states)
-        self.new_states.append(new_states)
-        self.rewards.append(reward)
-        self.is_terminals.append(is_terminal)
+    def push(self, _action, _old_state, _old_state_value, _new_state, _reward):
+        self.actions.append(_action)
+        self.old_state.append(_old_state)
+        self.old_state_value.append(_old_state_value)
+        self.new_state.append(_new_state)
+        self.rewards.append(_reward)
+
+    def pop(self):
+        self.actions.pop()
+        self.old_state.pop()
+        self.old_state_value.pop()
+        self.new_state.pop()
+        self.rewards.pop()
     
-    def clear(self) :
+    def clear(self, player=None):
+        if player is not None: self.player = player
         self.actions = [] 
-        self.states = []
+        self.old_state = []
+        self.old_state_value = []
+        self.new_state = []
         self.rewards = []
-        self.is_terminals = []
     
     @property
     def length(self) :
@@ -54,176 +76,219 @@ class StepRecord() :
             to = beg + size
         else:
             to = None
-        return np.array(self.actions[beg:to]), np.array(self.old_states[beg:to]), np.array(self.new_states[beg:to]), np.array(self.rewards[beg:to]), self.is_terminals
-        
+        return np.array(self.actions[beg:to]), np.array(self.old_state[beg:to]), np.array(self.old_state_value[beg:to]), np.array(self.new_state[beg:to]), np.array(self.rewards[beg:to])
 
 class ActorCritic :
     def __init__ (self, size, load_model_file) :    
-        self.actor = None
+        self.w_actor = None
+        self.b_actor = None
         self.critic = None
         self.step_records = [StepRecord()]
         self.size = size
+        self.size_square = size**2
+        self.action_size = size**2 + 1
+
+        #self.action = K.placeholder(shape=(None, self.action_size))
+        #self.advantage = K.placeholder(shape=(None,))
         
         if load_model_file:
-            self.actor = load_model("actor_" + load_model_file)
-            self.critic = load_model("critic_" + load_model_file)
+            self.w_actor = load_model("w_actor_" + load_model_file, custom_objects={"actor_loss": actor_loss})
+            self.b_actor = load_model("b_actor_" + load_model_file, custom_objects={"actor_loss": actor_loss})
+            self.critic = load_model("critic_" + load_model_file, custom_objects={"critic_loss": critic_loss})
         else :
             self.init_models(size)
             
-        self.a_optimizer = optimizers.rmsprop(lr = A_LR, decay = A_LR_DECAY)
-        self.actor.compile(loss = "mse", optimizer = self.a_optimizer)
+        self.a_optimizer = optimizers.adam(lr = A_LR, decay = A_LR_DECAY)
+        self.w_actor.compile(loss = actor_loss, optimizer = self.a_optimizer)
+        self.b_actor.compile(loss = actor_loss, optimizer = self.a_optimizer)
 
-        self.c_optimizer = optimizers.rmsprop(lr = C_LR, decay = C_LR_DECAY)
-        self.critic.compile(loss = "mse", optimizer = self.c_optimizer)
-    
+        self.c_optimizer = optimizers.adam(lr = C_LR, decay = C_LR_DECAY)
+        self.critic.compile(loss = critic_loss, optimizer = self.c_optimizer)
+
     def init_models(self, size):
-        input_map = Input((size, size, 2))
-        x1 = Conv2D(32, (size//3, size//3), strides=(2, 2), padding="valid", activation="relu")(input_map)
-        x1 = Conv2D(64, (size//9, size//9), activation="relu")(x1)
+        input_grid = Input((size, size, 2))
+        strides_size = (2, 2) if size > 13 else (1, 1)
+        x1 = Conv2D(64, (size//2, size//2), strides=strides_size, padding="valid", activation="relu")(input_grid)        
+        x2 = Conv2D(64, (size//3, size//3), strides=strides_size, padding="valid", activation="relu")(input_grid)
         
-        x2 = Conv2D(32, (size//2, size//2), padding="valid", activation="relu")(input_map)
-        x2 = Conv2D(64, (size//4, size//4), activation="relu")(x2)
-        
-        x3 = Conv2D(32, ((size*2)//3, (size*2)//3), padding="valid", activation="relu")(input_map)
-        x3 = Conv2D(64, ((size*4)//9, (size*4)//9), activation="relu")(x3)
-        
+        x0 = Flatten()(input_grid)
         x1 = Flatten()(x1)
         x2 = Flatten()(x2)
-        x3 = Flatten()(x3)
-        #x = Concatenate()([x1, x2])
-        x = Concatenate()([x1, x2, x3])
-        x = Dropout(0.2)(x)
+        x = Concatenate()([x0, x1, x2])
+        shared = Dropout(0.1)(x)
         
-        shared = Dense(int(2*size**2), activation = "relu")(x)
-        shared = Dropout(0.2)(shared)
+        #shared = Dense(int(8*size), activation = "relu")(x)
+        #shared = Dropout(0.1)(shared)
         
-        logits = Dense(size**2)(shared)
-        self.actor = Model(input_map, logits)
+        w_logits = Dense(self.action_size, activation="softmax")(shared)
+        b_logits = Dense(self.action_size, activation="softmax")(shared)
+        self.w_actor = Model(input_grid, w_logits)
+        self.b_actor = Model(input_grid, b_logits)
 
-        values = Dense(size**2)(shared)
-        self.critic = Model(input_map, values)
-        self.critic.summary()
+        value = Dense(1)(shared)
+        # value can be negtive
+        self.critic = Model(input_grid, value)
+        self.w_actor.summary()
     
-    def softmax(self, x, temperature=1.0):
+    def get_value(self, boardgrid):
+        return self.critic.predict(np.expand_dims(boardgrid, axis=0))[0,0]
+
+    def get_instincts(self, playas, boardgrid):
+        if playas == WHITE:
+            return self.w_actor.predict(np.expand_dims(boardgrid, axis=0))[0]
+        else:
+            return self.b_actor.predict(np.expand_dims(boardgrid, axis=0))[0]
+
+    def masked_softmax(self, mask, x):
+        # astype("float64") because numpy's multinomial convert array to float64 after pval.sum()
+        # sometime the sum exceed 1.0 due to numerical rounding
         x = x.astype("float64")
+        # this normalize x
+        #x = (x - x.mean()) / (np.std(x) + 1e-9)
+        x[mask] = -1e16 # very large negtive number
         if len(x.shape) != 1:
             print("softmax input must be 1-D numpy array")
             return
-        return np.exp(x/temperature)/np.sum(np.exp(x/temperature))
+        return np.exp(x)/np.sum(np.exp(x))
 
-    def sigmoid(self, x):
-        return 1 / (1 + np.exp(-x))
+    # def sigmoid(self, x):
+    #     return 1 / (1 + np.exp(-x))
     
-    def decide_random(self, board, temperature=1.0):
+    def get_masked_instincts(self, board):
         playas = board.next
+        invalid_move = np.zeros((self.size_square + 1), dtype=bool)
         # transpose so that [x, y] become [x+y*size]
-        illegal = np.transpose(board.illegal[:, :, 0 if playas==BLACK else 1]).flatten()
-        has_stone = np.transpose(np.max(board.map, axis=2)==1).flatten()
-        unplaceable = np.logical_or(illegal, has_stone)
-        if np.where(unplaceable)[0].shape[0] == board.size**2:
-            return -1, -1, 0.0
-        
-        logits = np.squeeze(self.actor.predict(np.expand_dims(board.map, axis=0)))
-        
-        # white's goal is to make value low
-        if playas == WHITE:
-            logits = -logits
-        # just a big negtive number
-        logits[unplaceable] = -10e6
+        invalid_move[:self.size_square] = np.transpose(np.sum(board.grid, axis=2)==1).flatten()
+        for p in board.suicide_illegal.union(board.same_state_illegal):
+            invalid_move[p[0]+p[1]*self.size] = True
 
-        # astype("float64") because numpy's multinomial convert array to float64 after pval.sum()
-        # sometime the sum exceed 1.0 due to numerical rounding
-        instinct = self.softmax(logits, temperature)
-        act = np.argmax(np.random.multinomial(1, instinct, 1))
-        return act%self.size, act//self.size, instinct[act]
-    
-    def decide_tree_search(self, board, temperature=0.01, depth=2, kth=4):
-        playas = board.next
-        # transpose so that [x, y] become [x+y*size]
-        illegal = np.transpose(board.illegal[:, :, 0 if playas==BLACK else 1]).flatten()
-        has_stone = np.transpose(np.max(board.map, axis=2)==1).flatten()
-        unplaceable = np.logical_or(illegal, has_stone)
-        if np.where(unplaceable)[0].shape[0] == self.size**2:
-            return -1, -1, 0.0
-        
-        logits = np.squeeze(self.actor.predict(np.expand_dims(board.map, axis=0)))
-        values = np.squeeze(self.critic.predict(np.expand_dims(board.map, axis=0)))
-        
-        # white's goal is to make value low
         if playas == WHITE:
-            logits = -logits
-            values = -values
-        # just a big negtive number
-        logits[unplaceable] = -10e6
-        
-        win_rate = self.sigmoid(values)
-        instinct = self.softmax(logits, temperature)
-        
-        if depth<1:
-            act = np.argmax(win_rate)
-            #print("depth 0 find", act, "w/ win_rate", win_rate[act])
+            logits = self.w_actor.predict(np.expand_dims(board.grid, axis=0))[0]
         else:
-            #print("depth", depth)
-            candidates = np.argpartition(instinct, -kth)[-kth:]
-            searched_win_rate = win_rate[candidates]
-            for idx, candidate in enumerate(candidates):
-                board_cpy = deepcopy(board)
-                add_stone = go.Stone(board_cpy, 
-                                  (candidate%self.size, candidate//self.size),
-                                  playas)
-                _x, _y, _inst, _wr = self.decide_tree_search(board_cpy, temperature, depth-1, kth)
-                searched_win_rate[idx] = _wr
-                #print("searched for candidate", candidate, "find win_rate", _wr)
-            act = candidates[np.argmax(searched_win_rate)]
-        return act%self.size, act//self.size, instinct[act], win_rate[act]
-    
-    def get_winrates(self, boardmap):
-        return self.sigmoid(self.critic.predict(np.expand_dims(boardmap, axis=0))[0])
+            logits = self.b_actor.predict(np.expand_dims(board.grid, axis=0))[0]
         
-    def get_instincts(self, boardmap):
-        return self.softmax(self.actor.predict(np.expand_dims(boardmap, axis=0))[0])
+        masked_instincts = self.masked_softmax(invalid_move, logits)
+        #print(all(np.logical_or(np.logical_not(invalid_move), (instinct < 1e-4)))) # if output False, something is wrong
+        return masked_instincts
+
+    def decide_instinct(self, board):
+        masked_instincts = self.get_masked_instincts(board)
+        value = self.critic.predict(np.expand_dims(board.grid, axis=0))[0,0]
+        act = np.random.choice(self.size_square+1, 1, p=masked_instincts)[0]
+        return act%self.size, act//self.size, masked_instincts[act], value
+
+    def decide_tree(self, board, depth, kth):
+        action, instinct, value = self.tree_search(board, depth, kth, [-1e16, 1e16])
+        return action%self.size, action//self.size, instinct, value
+
+    def tree_search(self, board, depth, kth, alphabeta):
+        """
+        alphabeta is a list [alpha, beta] so that it can pass down as one object
+        """
+        if depth <= 0:
+            return -1, 0, self.get_value(board.grid)
+        playas = board.next
+        masked_instincts = self.get_masked_instincts(board)
+        candidates = np.argpartition(masked_instincts, -kth)[-kth:]
+        np.random.shuffle(candidates)
+        best_v = -1e15 if playas == BLACK else 1e15
+        best_a = -1
+        for i, candidate in enumerate(candidates):
+            #print("depth", depth, "branch", i, "best_v", best_v, "alphabeta", alphabeta)
+            islegal = True
+            board_cpy = deepcopy(board)
+            if candidate >= self.size_square:
+                # is pass
+                board_cpy.pass_move()
+            else:
+                candidate_x = candidate%self.size
+                candidate_y = candidate//self.size
+                add_stone = go.Stone(board_cpy, (candidate_x, candidate_y))
+                islegal = add_stone.islegal
+            if islegal:
+                a, inst, v = self.tree_search(board_cpy, depth-1, kth, alphabeta)
+                if playas == BLACK:
+                    if best_v < v * (np.random.random() * 0.5):
+                        best_v = v
+                        best_a = candidate
+                    alphabeta[0] = max(best_v, alphabeta[0])
+                else:
+                    if best_v > v * (np.random.random() * 0.5):
+                        best_v = v
+                        best_a = candidate
+                    alphabeta[1] = min(best_v, alphabeta[1])
+                # pruning happen when max player best >= min player best
+                if alphabeta[0] > alphabeta[1]:
+                    #print("pruning at depth", depth, "branch", i, ":", alphabeta)
+                    break
+        #print("depth", depth, "find best action", best_a, "with value", best_v, ":", alphabeta)
+        return best_a, masked_instincts[best_a], best_v
     
-    def record(self, point, old_map, new_map, reward, is_terminal):
-        self.step_records[-1].add(point[0]+point[1]*self.size, old_map, new_map, reward, is_terminal)
+    def pop_step(self):
+        self.step_records[-1].pop()
     
-    def add_record(self):
-        if len(self.step_records) >= STEP_QUEUE_MAX_LENGTH:
-            self.step_records = self.step_records[1:]
-        self.step_records.append(StepRecord())
+    def push_step(self, point, color, old_grid, old_value, new_grid, reward):
+        action = point[0] + point[1] * self.size
+        action_one_hot = np.zeros((self.action_size), dtype="int32")
+        action_one_hot[action] = 1
+        self.step_records[-1].push(action_one_hot, old_grid, old_value, new_grid, reward)
     
-    def reward_normalization(self, x):
-        return (x - x.mean()) / np.std(x)
+    def set_record_player(self, player):
+        self.step_records[-1].player = player
+
+    def enqueue_new_record(self):
+        if self.step_records[-1].length > 0:
+            if len(self.step_records) >= STEP_QUEUE_MAX_LENGTH:
+                self.step_records = self.step_records[1:]
+            self.step_records.append(StepRecord())
+    
+    # def reward_normalization(self, x):
+    #     return (x - x.mean()) / (np.std(x) + 1e-9)
 
     def learn(self, verbose=True):
-        closs = 0; aloss = 0
-        if len(self.step_records) < TRAIN_EPOCHS_THRESHOLD:
-            return
-        random_idxs = np.random.randint(len(self.step_records), size=TRAIN_EPOCHS)
-        for idx in random_idxs:
-            rec_a, rec_os, rec_ns, rec_r, rec_terminal = self.step_records[idx].get_arrays()
-            rec_r_norm = self.reward_normalization(rec_r)
-            train_length = self.step_records[idx].length
+        """
+            Critic learn: (Q-learning)
+                loss(t) = (TDError(t))^2 = (reward(t) + value(t+1) * GAMMA - value(t)) ^ 2
+
+            Actor learn: (Policy Gradient)
+                loss(t) = - TDError(t) * log(logits(t))
+            ()
             
-            #new_r = np.zeros((train_length, 1))
-            #new_a = np.zeros((train_length, self.size))
-            advantages = np.zeros((train_length, self.size**2))
-
-            new_r = self.critic.predict(rec_ns)
-            old_r = self.critic.predict(rec_os)
-            for i in range(train_length):
-                if rec_terminal[i]:
-                    new_r[i, rec_a[i]] = rec_r[i]
-                else:
-                    new_r[i, rec_a[i]] = rec_r[i] + new_r[i, rec_a[i]] * GAMMA
-                advantages[i, rec_a[i]] = new_r[i, rec_a[i]] - old_r[i, rec_a[i]]
-            #print("advantages:", advantages)
-            new_a = self.actor.predict(rec_os) + advantages 
-            closs += self.critic.fit(rec_os, advantages, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
-            aloss += self.actor.fit(rec_os, new_a, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
+            new_v: shape=(train_length, 1)
+                 = reward(t) + value(t+1) * GAMMA
+            old_v: shape=(train_length, self.size)
+                 = value(t)
+            a_true: shape=(train_length, action_size + 1)
+                a_true[:,0] = tderror; a_true[:,1:] = rec_a
+        """
+        closs = 0; aloss = 0
+        if len(self.step_records) < TRAIN_RECORDS_THRESHOLD:
+            return
+        random_id = np.random.randint(len(self.step_records), size=TRAIN_RECORDS)
+        for id in random_id:
+            rec_p = self.step_records[id].player
+            rec_a, rec_os, rec_ov, rec_ns, rec_r = self.step_records[id].get_arrays()
+            if rec_p == None or rec_a.shape[0] == 0: continue
+            new_v = np.squeeze(self.critic.predict(rec_ns))
+            #print(rec_ov.shape, rec_r.shape)
+            new_v = rec_r + new_v * GAMMA
+            new_v[-1] = rec_r[-1] # terminal
+            #print("new_v:", new_v.shape)
+            tderror = np.expand_dims(new_v - rec_ov, axis=1) # tderror.shape = (batch_length, 1)
+            if rec_p == WHITE: # white is min_player so tderror turns negtive
+                tderror = -tderror
+            #print("rec_a:", rec_a.shape, "tderror:", tderror.shape)
+            a_true = np.concatenate((tderror, rec_a), axis=1)
+            # only update the recorded action
+            closs += self.critic.fit(rec_os, new_v, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
+            if rec_p == BLACK:
+                aloss += self.b_actor.fit(rec_os, a_true, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
+            else:
+                aloss += self.b_actor.fit(rec_os, a_true, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
         if verbose:
-            print("avg_c_loss: %e, avg_a_loss: %e"%(closs/TRAIN_EPOCHS, aloss/TRAIN_EPOCHS))
+            print("avg_c_loss: %e avg_a_loss: %e"%(closs/TRAIN_RECORDS, aloss/TRAIN_RECORDS))
         
-    def save(self, save_weight_name) :
-        self.actor.save("actor_" + save_weight_name)
+    def save(self, save_weight_name):
+        self.w_actor.save("w_actor_" + save_weight_name)
+        self.b_actor.save("b_actor_" + save_weight_name)
         self.critic.save("critic_" +save_weight_name)
-
