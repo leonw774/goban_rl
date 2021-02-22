@@ -13,10 +13,10 @@ BLACK = go.BLACK
 
 GAMMA = 0.9
 
-STEP_QUEUE_MAX_LENGTH = 100
+STEP_QUEUE_MAX_LENGTH = 40
 
-TRAIN_RECORDS = 8
-TRAIN_RECORDS_THRESHOLD = 40
+TRAIN_RECORDS = 10
+TRAIN_RECORDS_THRESHOLD = 20
 BATCH_SIZE = 8
 
 A_LR = 1e-4
@@ -248,11 +248,11 @@ class ActorCritic :
     def learn(self, verbose=True):
         """
             Critic learn: (Q-learning)
-                loss(t) = (TDError(t))^2 = (reward(t) + value(t+1) * GAMMA - value(t)) ^ 2
+                loss = (TDError)^2 = (reward(s') + value(s') * GAMMA - value(s)) ^ 2
+                s -> a -> s'
 
             Actor learn: (Policy Gradient)
-                loss(t) = - TDError(t) * log(logits(t))
-            ()
+                loss = - TDError * log(logits(a))
             
             new_v: shape=(train_length, 1)
                  = reward(t) + value(t+1) * GAMMA
@@ -269,8 +269,9 @@ class ActorCritic :
             rec_p = self.step_records[id].player
             rec_a, rec_os, rec_ov, rec_ns, rec_r = self.step_records[id].get_arrays()
             if rec_p == None or rec_a.shape[0] == 0: continue
-            new_v = np.squeeze(self.critic.predict(rec_ns))
             #print(rec_ov.shape, rec_r.shape)
+            new_v = np.squeeze(self.critic.predict(rec_ns))
+            #old_v = np.squeeze(self.critic.predict(rec_os))
             new_v = rec_r + new_v * GAMMA
             new_v[-1] = rec_r[-1] # terminal
             #print("new_v:", new_v.shape)
@@ -284,7 +285,7 @@ class ActorCritic :
             if rec_p == BLACK:
                 aloss += self.b_actor.fit(rec_os, a_true, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
             else:
-                aloss += self.b_actor.fit(rec_os, a_true, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
+                aloss += self.w_actor.fit(rec_os, a_true, batch_size=BATCH_SIZE, verbose=0).history["loss"][0]
         if verbose:
             print("avg_c_loss: %e avg_a_loss: %e"%(closs/TRAIN_RECORDS, aloss/TRAIN_RECORDS))
         

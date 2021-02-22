@@ -28,7 +28,7 @@ COLOR = ((0, 0, 0), (255, 255, 255))
 GRID_SIZE = 20
 DRAW_BOARD_SIZE = (GRID_SIZE * BOARD_SIZE + 20, GRID_SIZE * BOARD_SIZE + 20)
 
-MAX_STEP = (BOARD_SIZE)**2 - 1
+MAX_STEP = (BOARD_SIZE)**2 - 2
 BASE_REWARD = 1
 ILLEGAL_PUNISHMENT = -4 * BASE_REWARD
 
@@ -129,10 +129,10 @@ def train():
             else:
                 pass_count = 0
                 added_stone = Stone(board, (x, y))
-                if not added_stone.islegal:
-                    continue
-                else:
+                if added_stone.islegal:
                     reward = 0
+                else:
+                    continue
 
             if pass_count >= 2 or steps == MAX_STEP:
                 winner, b_score, w_score, output_str = board.score()
