@@ -12,12 +12,16 @@ __author__ = "Aku Kotkavuo <aku@hibana.net>"
 __version__ = "0.1"
 
 import pygame
+import pickle
+import numpy as np
+from copy import deepcopy 
 import go
+from time import time
 import random
-from sys import exit
+from sys import exit, getsizeof
 
 BACKGROUND = 'images/ramin.jpg'
-BOARD_SIZE = 19
+BOARD_SIZE = 9
 KOMI = 6.5
 GRID_SIZE = 25
 DRAW_BOARD_SIZE = (GRID_SIZE * BOARD_SIZE + GRID_SIZE, GRID_SIZE * BOARD_SIZE + GRID_SIZE)
@@ -74,11 +78,13 @@ class Board(go.Board):
         pygame.display.update()
 
 def main():
+    #measure_times = []
+    board_states = []
     while True:
         pygame.time.wait(250)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                exit()
+                return
             if event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1 and board.outline.collidepoint(event.pos):
                     x = int(round(((event.pos[0]-GRID_SIZE-5) / GRID_SIZE), 0))
@@ -88,12 +94,15 @@ def main():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_p:
                     winner, b, w, out_str = board.score(output=True)
-                    exit()
-
+                    print(out_str)
+                    #print(np.sum(measure_times), np.mean(measure_times), np.std(measure_times))
+                    #print(getsizeof(board_states))
+                    return
+    
 if __name__ == '__main__':
     pygame.init()
     pygame.display.set_caption('Goban')
     screen = pygame.display.set_mode(DRAW_BOARD_SIZE, 0, 32)
     background = pygame.image.load(BACKGROUND).convert()
-    board = Board(debug = True)
+    board = Board(debug = False)
     main()
