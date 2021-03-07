@@ -45,17 +45,22 @@ class MonteCarloNode():
         self.state = state
         self.policies = policies
         self.value = value
-        # Q, N, UCT are updated in back propergate phrase
+        # Q, N are updated in back propergate phrase
         self.Q = {} # expected value of child from this node's perspective
         self.N = {k : 0 for k in children_keys} # number of times that this node take path to its child
         self.expanding = {k : False for k in children_keys} # True when selected to expand... set to False in back propagate phase
+        self.visiting = {k : 0 for k in children_keys} # +1 when selected in path... -1 back propagate phase
         self.children = {k : None for k in children_keys}  # action_id : node
+        self.nodelock = threading.Lock()
 
-class MonteCarlo():
-    def __init__ (self, model, batch_size):
+class ParallelMonteCarlo():
+    def __init__ (self, model, batch_size, thread_max = 0):
         """
             model: playmodel
             batch_size: larger than 8 will not be too effective
+            use_thread: True or False
+            thread_max: if this parameter is set, thread_num will equal to the number of children of root
+                approximately equal to degree
         """
         self.model = model
         self.size = model.size
@@ -65,7 +70,8 @@ class MonteCarlo():
         self.visited = {} # node id : node instance
         self.playout_limit = 0 # reset every time search method called
         self.batch_size = batch_size
-        print("Monte Carlo parameters: Batch size:", batch_size)
+        self.thread_max = thread_max
+        print("Parallel Monte Carlo parameters: Batch size:", batch_size, "thread max:", thread_max)
 
     def clear_visit(self):
         self.visited = {}
@@ -80,8 +86,23 @@ class MonteCarlo():
         # add root
         self.root_node = self.add_node(loads(dumps(root_board)))
         self.prev_action = prev_action
-        self.playout_loop()
-        
+        self.globaltreelock = threading.Lock()
+        self.playout_count_lock = threading.Lock()
+        thrd_list = []
+        if self.thread_max > 0:
+            thread_num = min(self.thread_max, len(self.root_node.children))
+        else:
+            thread_num = len(self.root_node.children)
+        # this is to compensate the critical section problem of playout_count
+        self.playout_limit = int(self.playout_limit * (thread_num - 1) / thread_num)
+        # begin playout
+        for i in range(thread_num):
+            thrd_list.append(threading.Thread(target=self.threaded_playout_loop))
+        for i in range(thread_num):
+            thrd_list[i].setDaemon(True)
+            thrd_list[i].start()
+        for i in range(thread_num):
+            thrd_list[i].join()
         # find best root path
         """ 
         action_path = []
@@ -97,20 +118,13 @@ class MonteCarlo():
         # print(self.playout_count)
         #print("playout time", np.sum(self.record_time), np.mean(self.record_time), np.std(self.record_time))
         return list(self.root_node.Q.keys()), list(self.root_node.Q.values())
-    
-    def playout_loop(self):
-        if self.batch_size > 1:
-            while self.playout_count < self.playout_limit:
-                #t = time()
-                self.batch_playout()
-                if len(self.root_node.children) <= 1:
-                    break
-                #self.record_time.append(time()-t)
-        else:
-            for _ in range(self.playout_limit):
-                self.playout()
-                if len(self.root_node.children) <= 1:
-                    break
+
+    def threaded_playout_loop(self):
+        #print("threaded_playout_loop")
+        while self.playout_count < self.playout_limit:
+            self.batch_playout()
+            if len(self.root_node.children) <= 1:
+                break
 
     def playout(self):
         node_path, action_path, is_terminal = self.select()
@@ -123,7 +137,7 @@ class MonteCarlo():
     def batch_playout(self):
         batch_list = []
         no_batch_count = 0
-        for _ in range(self.batch_size):
+        while len(batch_list) < self.batch_size and no_batch_count < (self.batch_size // 8) + 1:
             node_path, action_path, is_terminal = self.select(batching = True)
             if len(action_path) == 0: # no path available to choose
                 break
@@ -135,14 +149,19 @@ class MonteCarlo():
                 no_batch_count += 1
             else: #illegal action: do nothing
                 no_batch_count += 1
-            self.playout_count += 1
-        #end while
+
+            #self.playout_count_lock.acquire()
+            self.playout_count += 1 # SHOULD BE CRITICAL SECTION
+            #self.playout_count_lock.release()
+            # but for speed reason, we doesn't really need precise number of playout
+            # it will end nonetheless
+
         if len(batch_list) > 0:
             self.batch_add_node(batch_list)
         self.backpropagate_with_batch(batch_list)
 
     def select(self, batching = False):
-        # print("selecting nodes")
+        #print("selecting nodes")
         curnode = self.root_node
         node_path = []
         action_path = []
@@ -152,6 +171,7 @@ class MonteCarlo():
         while True:
             #fuse -= 1
             best_a = -1
+            curnode.nodelock.acquire()
             N_sum_sqrt = np.sqrt(sum(curnode.N.values()))
             """
                 UCT is upper confience bound of v
@@ -163,18 +183,19 @@ class MonteCarlo():
                 1.5~3.0 are used in [-1, 1] valued environment
             """
             cur_filtered_uct_dict = {
-                k : curnode.Q.get(k,0)+2*curnode.policies[k]*N_sum_sqrt/(1+curnode.N[k])
+                k : curnode.Q.get(k,0)+2*curnode.policies[k]*N_sum_sqrt/(1+curnode.N[k]) - curnode.visiting[k] * 0.1
+                # virtual loss = UTC - visiting_count * (1 / degree)
                 for k in curnode.children
                 if not curnode.expanding[k] and (k == self.size_square or not curnode.children[k] in node_path)
             }
+            curnode.nodelock.release()
             if len(cur_filtered_uct_dict) > 0:
                 best_a = max(cur_filtered_uct_dict, key=cur_filtered_uct_dict.get)
-            
             # if no valid children
             # although curnode is visited... in some sense this is a terminal node
             if best_a == -1:
-                #print("no children left to select")
                 break
+
             node_path.append(curnode)
             action_path.append(best_a)
             # check two consecutive pass
@@ -183,14 +204,16 @@ class MonteCarlo():
                 is_terminal = True
                 break
             # check if not visited
-            if curnode.children[best_a] is None: 
-                if batching:
-                    # mark this not visited children for batching and threading
-                    # this mark will be erased (set to False) in backpropagate
-                    curnode.expanding[best_a] = True
-                    #print("batching action", best_a, "from", curnode.id)
+            if curnode.children[best_a] is None:
+                # tell other thread this is visited
+                curnode.nodelock.acquire()
+                curnode.expanding[best_a] = True
+                curnode.nodelock.release()
                 break
             else:
+                curnode.nodelock.acquire()
+                curnode.visiting[best_a] += 1
+                curnode.nodelock.release()
                 curnode = curnode.children[best_a]
         # traverse to an unexpanded node
         # print("selected path:", action_path)
@@ -200,14 +223,13 @@ class MonteCarlo():
         leaf_node = node_path[-1]
         leaf_action = action_path[-1]
         board = loads(leaf_node.state)
-        #print("leaf node state id:", board.grid_hash())
 
         if is_terminal:
             board.pass_move()
             winner, b, w = board.score()    
             # node is valued as board.next player
             value = 1 if board.next == winner else -1
-            #print("terminal action value", value)
+            # print("terminal action value", value)
             return None, -value
 
         # update game board
@@ -231,7 +253,11 @@ class MonteCarlo():
                     value = max(self.visited[new_zhash].Q.values())
                 else:
                     value = self.visited[new_zhash].value
+                #self.globaltreelock.acquire()
+                leaf_node.nodelock.acquire()
                 leaf_node.children[leaf_action] = self.visited[new_zhash]
+                #self.globaltreelock.release()
+                leaf_node.nodelock.release()
                 return None, -value
             # now this is conpletly new node
             # not add children to parent node... that's done in batch_add_node
@@ -242,19 +268,20 @@ class MonteCarlo():
                     self.node_reuse(new_zhash)
                     return None, -self.visited[new_zhash].value
                 else:
-                    #print(new_zhash, "is batching")
+                    # print(new_zhash, "is batching")
                     return BatchInfo(node_path=node_path, action_path=action_path, 
                             state=dumps(board), id=new_zhash), None
         else:
-            # delete this action's info
-            leaf_node.children.pop(leaf_action)
-            # re-dump board state for its illegal record,
-            # it can reduce some illegal children in endgame point expand
-            leaf_node.state = dumps(board)
-            #print(leaf_action, "is illegal")
+            #self.globaltreelock.acquire()
+            leaf_node.nodelock.acquire()
+            leaf_node.children.pop(leaf_action, None)
+            #self.globaltreelock.release()
+            leaf_node.nodelock.release()
+            # print(leaf_action, "is illegal")
         # return None, None so that it won't go to backpropergate
         return None, None
         
+
     def expand(self, leaf_node, leaf_action, is_terminal):
         board = loads(leaf_node.state)
         if is_terminal:
@@ -288,32 +315,39 @@ class MonteCarlo():
                 new_node = self.add_node(board)
                 value = new_node.value
             # parent node add children
+            #self.globaltreelock.acquire()
+            leaf_node.nodelock.acquire()
             leaf_node.children[leaf_action] = self.visited[new_zhash]
+            #self.globaltreelock.release()
+            leaf_node.nodelock.release()
             return -value
         else:
-            # delete this child's info
-            leaf_node.children.pop(leaf_action)
-            # re-dump board state for its illegal record,
-            # it can reduce some illegal children in endgame point expand
-            leaf_node.state = dumps(board)
+            #self.globaltreelock.acquire()
+            leaf_node.nodelock.acquire()
+            leaf_node.children.pop(leaf_action, None)
+            #self.globaltreelock.release()
+            leaf_node.nodelock.release()
             #print(leaf_action, "is illegal")
         return
 
     def batch_add_node(self, batch_list):
-        #print("batch_add_node")
+        # print("batch_add_node")
         # batch-y get value
         batched_mask = np.empty((len(batch_list), self.action_size), dtype=bool)
         batched_board_grid = np.empty((len(batch_list), self.size, self.size, 2))
         for i, binfo in enumerate(batch_list):
             board = loads(binfo.state)
             batched_mask[i] = self.model.get_invalid_mask(board)
-            boardgrid = board.grid.copy()
             if board.next == WHITE:
-                boardgrid[:,:,[0,1]] = boardgrid[:,:,[1,0]]
-            batched_board_grid[i] = boardgrid
+                batched_board_grid[i] = board.grid[:,:,[1,0]]
+            else:
+                batched_board_grid[i] = board.grid
 
-        batched_logit = self.model.actor.predict_on_batch(batched_board_grid) # shape = (batch_size, action_size)
-        batched_value = self.model.critic.predict_on_batch(batched_board_grid) # shape = (batch_size, 1)
+        # fix initialization problem in threading scheme in Ubuntu
+        with self.model.graph.as_default():
+            with self.model.session.as_default():
+                batched_logit = self.model.actor.predict_on_batch(batched_board_grid) # shape = (batch_size, action_size)
+                batched_value = self.model.critic.predict_on_batch(batched_board_grid) # shape = (batch_size, 1)
         batched_noise = np.random.dirichlet(alpha=self.dirichlet_alpha, size=(len(batch_list)))
         batched_noised_logit = 0.8 * batched_logit + 0.2 * batched_noise
 
@@ -322,7 +356,7 @@ class MonteCarlo():
             binfo.value = batched_value[i][0]
             # create new node
             masked_intuitions = masked_softmax(batched_mask[i], batched_noised_logit[i], 1.0)
-            # children_actions = np.random.default_rng().choice(self.model.action_size,
+            # children_actions = np.random.choice(self.model.action_size,
             #                             size=self.degree,
             #                             p=masked_intuitions)
             children_actions = fast_rand_int_sample(size=self.degree, p=masked_intuitions)
@@ -332,13 +366,17 @@ class MonteCarlo():
                                             children_keys=children_actions)
             self.visited[bid] = new_node
             # update parent's node
+            #self.globaltreelock.acquire()
+            binfo.node_path[-1].nodelock.acquire()
             binfo.node_path[-1].children[binfo.action_path[-1]] = new_node
+            #self.globaltreelock.release()
+            binfo.node_path[-1].nodelock.release()
     # end def batch_add_node
 
     def node_reuse(self, zhash):
         # children_actions = np.random.choice(self.model.action_size,
         #                         size=self.degree,
-        #                         p=self.visited[zhash].policies)
+        #                         p=self.prev_visited[zhash].policies)
         children_actions = fast_rand_int_sample(size=self.degree, p=self.prev_visited[zhash].policies)
         self.visited[zhash] = MonteCarloNode(state=self.prev_visited[zhash].state,
                                             policies=self.prev_visited[zhash].policies,
@@ -363,26 +401,33 @@ class MonteCarlo():
     # end def add_node
 
     def backpropagate(self, node_path, action_path, value):
-        #print("bp with value:", value)
+        # print("bp with value:", value)
         for rev_i, a in reversed(list(enumerate(action_path))):
             curnode = node_path[rev_i]
+            curnode.nodelock.acquire()
             Qa = curnode.Q.get(a, 0)
             Na = curnode.N[a]
             curnode.Q[a] = (value + Na * Qa) / (Na + 1)
             curnode.N[a] += 1
+            curnode.visiting[a] -= 1
             curnode.expanding[a] = False
+            curnode.nodelock.release()
             value = -value # to switch side
 
     def backpropagate_with_batch(self, batch_list):
-        #print("batch bp with value:")
+        # print("batch bp with value:")
         for binfo in batch_list:
             node_path, action_path, value = binfo.node_path, binfo.action_path, binfo.value
-            #print(value)
+            #self.globaltreelock.acquire()
             for rev_i, a in reversed(list(enumerate(action_path))):
                 curnode = node_path[rev_i]
+                curnode.nodelock.acquire()
                 Qa = curnode.Q.get(a, 0)
                 Na = curnode.N[a]
                 curnode.Q[a] = (value + Na * Qa) / (Na + 1)
                 curnode.N[a] += 1
+                curnode.visiting[a] -= 1
                 curnode.expanding[a] = False
+                curnode.nodelock.release()
                 value = -value # to switch side
+            #self.globaltreelock.release()

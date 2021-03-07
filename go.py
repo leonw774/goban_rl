@@ -75,7 +75,7 @@ class Board(object):
 
         self.zobrist_init = np.random.randint(9223372036854775807, dtype=np.int64) # 2^63 - 1
         # for grid positions
-        self.zobrist_grid = np.random.randint(9223372036854775807, size=(self.size, self.size, 2), dtype=np.int64)
+        self.zobrist_grid = np.random.randint(9223372036854775807, size=(self.size, self.size, 3), dtype=np.int64)
         # for b_captured, w_captured, next
         self.zobrist_next = np.random.randint(9223372036854775807, dtype=np.int64)
         self.outputDebug = is_debug
@@ -90,9 +90,12 @@ class Board(object):
             for j in range(self.size):
                 if self.grid[i, j, 0] == 1:
                     zhash ^= self.zobrist_grid[i, j, 0]
-                else:
+                elif self.grid[i, j, 1] == 1:
                     zhash ^= self.zobrist_grid[i, j, 1]
-        if self.next == WHITE: zhash ^= self.zobrist_next
+                else:
+                    zhash ^= self.zobrist_grid[i, j, 2]
+        if self.next == WHITE:
+            zhash ^= self.zobrist_next
         return zhash
 
     def has_stone(self, point):
@@ -160,8 +163,8 @@ class Board(object):
         for dead_nbeg in killed_nb_enemy_group:
             for s in dead_nbeg.stones:
                 self.update_grid(s, None)
-        # check latest previous 4 board state (preventing n-ko rotation, n <= 2)
-        same_state_rewind_limit = 4
+        # check latest previous 6 board state (preventing n-ko rotation, n <= 3)
+        same_state_rewind_limit = 6
         same_state = False
         zhash = self.grid_hash()
         for entry in self.log[-same_state_rewind_limit:]:
@@ -222,7 +225,7 @@ class Board(object):
         return true if successfully add a stone in a legal place  
                false if not success  
         """
-        if self.has_stone(point):
+        if sum(self.grid[point]) == 1: # has stone
             return False
         self.update_grid(point, self.next)
 
@@ -230,7 +233,7 @@ class Board(object):
         nb_friend_groups = set()
         nb_enemy_groups = set()
         for nbp in self.neighors[point]:
-            if not self.has_stone(nbp): continue
+            if sum(self.grid[point]) == 0: continue # has no stone
             for g in self.groups:
                 if nbp in g.stones:
                     if g.color == self.next:
@@ -306,7 +309,7 @@ class Board(object):
         1. check life & dead of every group
         2. count territory controlled by every living group
         3. Tromp-Tayler rule's scoring:
-           score = stones on the board + territory + captured + komi(6.5) if white
+           score = stones on the board + territory + komi(6.5) if white
         - Territory:
             - if a empty point P can reach a stone S it means that
               there exist a path from P to S consisted of other empty points or
@@ -378,8 +381,8 @@ class Board(object):
         # b_score = len(b_living_stones) + len(b_territory) + len(w_dead_stones) + self.w_captured
 
         # score = stones on board + territory + captured + komi(6.5) if white
-        w_score = np.sum(self.grid[:,:,WHITE]==1) + len(w_territory) + self.b_captured + self.komi    
-        b_score = np.sum(self.grid[:,:,BLACK]==1) + len(b_territory) + self.w_captured
+        w_score = np.sum(self.grid[:,:,WHITE]==1) + len(w_territory) + self.komi    
+        b_score = np.sum(self.grid[:,:,BLACK]==1) + len(b_territory)
         
         if b_score > w_score:
             winner = BLACK

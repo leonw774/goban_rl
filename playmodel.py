@@ -1,7 +1,9 @@
 import numpy as np
+from time import time
 import go
 from montecarlo import MonteCarlo
-import pickle
+from parallelmontecarlo import ParallelMonteCarlo
+import tensorflow as tf
 from tensorflow.keras import backend as K
 from tensorflow.keras import optimizers
 from tensorflow.keras.models import Model, load_model
@@ -13,7 +15,7 @@ from tensorflow.keras.layers import Activation, BatchNormalization, Concatenate,
 WHITE = go.WHITE
 BLACK = go.BLACK
 
-SHARE_HIDDEN_LAYER_NUM = 4
+SHARE_HIDDEN_LAYER_NUM = 2
 SHARE_HIDDEN_LAYER_CHANNEL = 64
 
 A_LR = 1e-4
@@ -87,6 +89,23 @@ def actor_loss(a_true, y_pred):
     # y_true is new_v
     return K.mean(K.square(new_v - y_pred), axis=-1) """
 
+def masked_softmax(mask, x, temperature):
+    if len(x.shape) != 1:
+        print("softmax input must be 1-D numpy array")
+        return
+    # astype("float64") because numpy's multinomial convert array to float64 after pval.sum()
+    # sometime the sum exceed 1.0 due to numerical rounding
+    x = x.astype("float64")
+    # do not consider i if mask[i] == True
+    mask_indice = np.argwhere(~mask)
+    masked_x = x[mask_indice]
+    # stablize/normalize because if x too big will cause NAN when exp(x)
+    normal_masked_x = masked_x - max(masked_x)
+    masked_softmax_x = np.exp(normal_masked_x/temperature) / np.sum(np.exp(normal_masked_x/temperature))
+    softmax = np.zeros(x.shape)
+    softmax[mask_indice] = masked_softmax_x
+    return softmax
+
 def switch_side(grid):
     switched_grid = grid.copy()
     switched_grid[:,:,[0,1]] = switched_grid[:,:,[1,0]]
@@ -96,20 +115,28 @@ class ActorCritic():
     def __init__ (self, size, step_records_length_max, load_model_file) :    
         self.actor = None
         self.critic = None
-        self.step_records = [StepRecord()]
         self.size = size
         self.size_square = size**2
         self.action_size = size**2 + 1
 
+        self.step_records = [StepRecord()]
         self.step_records_length_max = step_records_length_max
-        self.minimax_hash_record = set()
-        self.monte_carlo = MonteCarlo(self, batch_size=4, thread_num=12)
-        
+
         if load_model_file:
             self.actor = load_model("actor_" + load_model_file, custom_objects={"actor_loss": actor_loss})
             self.critic = load_model("critic_" + load_model_file)
         else :
             self.init_models()
+        # initalize predict function ahead of possible threading in monte carlo 
+        # to prevent multi initializtion
+        self.actor._make_predict_function()
+        self.critic._make_predict_function()
+        # for fixing initialization problem in parallel monte carlo's threading scheme in Ubuntu
+        #self.session = K.get_session()
+        #self.graph = tf.compat.v1.get_default_graph()
+        #self.graph.finalize()
+        self.monte_carlo = MonteCarlo(self, batch_size=32)
+        # self.monte_carlo = ParallelMonteCarlo(self, batch_size=4, thread_max=8)
     
     def init_models(self):
         input_grid = Input((self.size, self.size, 2))
@@ -167,25 +194,8 @@ class ActorCritic():
             boardgrid = switch_side(boardgrid)
         return self.actor.predict(boardgrid[np.newaxis])[0]
 
-    def masked_softmax(self, mask, x, temperature):
-        if len(x.shape) != 1:
-            print("softmax input must be 1-D numpy array")
-            return
-        # astype("float64") because numpy's multinomial convert array to float64 after pval.sum()
-        # sometime the sum exceed 1.0 due to numerical rounding
-        x = x.astype("float64")
-        # do not consider i if mask[i] == True
-        mask_indice = np.argwhere(~mask)
-        masked_x = x[mask_indice]
-        # stablize/normalize because if x too big will cause NAN when exp(x)
-        normal_masked_x = masked_x - max(masked_x)
-        masked_softmax_x = np.exp(normal_masked_x/temperature) / np.sum(np.exp(normal_masked_x/temperature))
-        softmax = np.zeros(x.shape)
-        softmax[mask_indice] = masked_softmax_x
-        return softmax
-
     def get_invalid_mask(self, board):
-        invalid_mask = np.zeros((self.size_square + 1), dtype=bool)
+        invalid_mask = np.zeros((self.action_size), dtype=bool)
         # transpose so that [x, y] become [x+y*size]
         invalid_mask[:self.size_square] = np.transpose(np.sum(board.grid, axis=2)==1).flatten()
         for p in board.suicide_illegal.union(board.same_state_illegal):
@@ -203,7 +213,7 @@ class ActorCritic():
         alpha = 10 / self.size_square
         noise = np.random.dirichlet(alpha=[alpha]*self.action_size)
         noised_logit = 0.8 * logits + 0.2 * noise
-        masked_intuitions = self.masked_softmax(invalid_mask, noised_logit, temperature)
+        masked_intuitions = masked_softmax(invalid_mask, noised_logit, temperature)
         #print(all(np.logical_or(np.logical_not(invalid_mask), (instinct < 1e-4)))) # if output False, something is wrong
         return masked_intuitions
 
@@ -212,12 +222,11 @@ class ActorCritic():
         act = np.random.choice(self.action_size, 1, p=masked_intuitions)[0]
         return act%self.size, act//self.size, masked_intuitions[act]
 
-    def decide_monte_carlo(self, board, playout=60, temperature=0.1):
+    def decide_monte_carlo(self, board, playout, temperature=0.1):
         degree = self.size * 2
         prev_point = board.log[-1][1] if len(board.log) else (-1, 0)
         prev_action = prev_point[0] + prev_point[1] * self.size
-        #candidates, values= self.monte_carlo.search(board, prev_action, degree, int(playout))
-        candidates, values = self.monte_carlo.threaded_search(board, prev_action, degree, int(playout))
+        candidates, values= self.monte_carlo.search(board, prev_action, degree, int(playout))
         # use value to softmax the candidates
         if len(candidates):
             values = np.array(values)
@@ -232,13 +241,13 @@ class ActorCritic():
         else: # GG
             x, y, i = self.decide_instinct(board, 0.5)
             return x, y, i
-
+    '''
     def decide_minimax(self, board, depth, kth):
         self.search_hash_record = set()
         action, value = self.minimax(board, depth, kth, -1e16, 1e16)
         return action%self.size, action//self.size, value
 
-    '''    # Minimax search tree
+        # Minimax search tree
     def minimax(self, board, depth, kth, alpha, beta):
         """
         alpha and beta are list [alpha], [beta] so that it can pass down as one object
@@ -290,7 +299,6 @@ class ActorCritic():
         self.step_records[-1].push(action_one_hot, old_grid, new_grid, reward)
 
     def enqueue_new_record(self):
-        self.monte_carlo.clear()
         if self.step_records[-1].length > 0:
             if len(self.step_records) >= self.step_records_length_max:
                 self.step_records = self.step_records[1:]
