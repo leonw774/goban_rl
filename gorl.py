@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--epochs", "-e", default=10000, type=int)
 parser.add_argument("--out-intv", "-o", dest="out_intv", default=1000, type=int)
 parser.add_argument("--size", "-s", dest="size", default=19, type=int)
-parser.add_argument("--playout", "-p", dest="playouts", default=512, type=int)
+parser.add_argument("--playout", "-p", dest="playouts", default=1024, type=int)
 parser.add_argument("--use-model", "-m", dest="use_model", type=str, default="", action="store")
 parser.add_argument("--self-play", dest="self_play", action="store_true")
 parser.add_argument("--test", type=str, default="", action="store")
@@ -108,13 +108,12 @@ def train():
     record_times = []
     b_win_count = 0
     record_as = BLACK
-    playout_begin = args.playouts
-    playout = playout_begin
-    playout_increase = 0.5
-    playout_limit = args.playouts
+    playout = args.playouts
+    playout_diff = 1
+    playout_limit = args.playouts / 2
 
     for epoch in range(EPOCHS):
-        playout = min(playout+playout_increase, playout_limit)
+        playout = max(playout-playout_diff, playout_limit)
         #temperature = 1.0
         steps = 0
         pass_count = 0
@@ -181,6 +180,9 @@ def train():
 
 def test(ai_play_as):
     print("begin test")
+    playout = args.playouts
+    playout_decrease = 1
+    playout_limit = args.playouts / 2
     pass_count = 0
     while True:
         pygame.time.wait(250)
@@ -199,8 +201,7 @@ def test(ai_play_as):
                 if not added_stone.islegal:
                     print("model tried illegal move")
                     break
-            #print("value:", model.get_value(board.grid))
-            #print("instinct:", model.get_intuitions(board.grid))
+            playout = max(playout-playout_decrease, playout_limit)
         else:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -226,6 +227,9 @@ def test(ai_play_as):
 
 def self_play():
     print("begin self play")
+    playout = args.playouts
+    playout_decrease = 1
+    playout_limit = args.playouts / 2
     pass_count = 0
     measure_times = []
     game_over = False
@@ -239,7 +243,7 @@ def self_play():
                     game_over = True
                     continue
                 t=time()
-                x, y, value = model.decide_monte_carlo(board, args.playouts)
+                x, y, value = model.decide_monte_carlo(board, playout)
                 print(time()-t)
                 measure_times.append(time()-t)
                 #x, y, value = model.decide_instinct(board, 0.1)
@@ -259,6 +263,7 @@ def self_play():
                         pass_count = 0
                         play_as = "B" if board.next == WHITE else "W"
                         print(play_as, "choose (%d, %d)\t value:%.3f"%(x, y, value))
+                playout = max(playout-playout_decrease, playout_limit)
                 
     print("game over")
     winner, b, w, out_str = board.score(output=True)
