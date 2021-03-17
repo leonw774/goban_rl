@@ -1,15 +1,14 @@
 #!/usr/bin/env python
 # coding: utf-8
-
 import numpy as np
 
 """Go library
-Edited by leow774 for keras ai training
-
-"""
 
 __author__ = "Aku Kotkavuo <aku@hibana.net>"
 __version__ = "0.1"
+
+Edited by leow774
+"""
 
 BLACK = 0
 WHITE = 1
@@ -24,79 +23,86 @@ class Stone(object):
         
 class Group:
     def __init__(self, stones_frozenset, neighbors_frozenset, color):
-        self.id = np.random.randint(2147483647)
+        #self.id = np.random.randint(2147483647)
         # frozenset of tuple(x, y)
         self.stones = stones_frozenset
         self.neighbors = neighbors_frozenset
         self.color = color
-
-    # def __hash__(self):
-    #     return hash((self.id, self.color))
-
-    # def __eq__(self, other):
-    #     return self.id == other.id and self.stones == other.stones and self.color == other.color
     
-    def __str__(self):
-        return ("Group { id:" + str(self.id) +
-                ", color:" + str(self.color) +
-                ", stones:" + str([str(p) for p in self.stones]) +
-                ", neibors:" + str([str(p) for p in self.neighbors]) +
-                " }")
+    # def __str__(self):
+    #     return ("Group { color:" + str(self.color) +
+    #             ", stones:" + str([str(p) for p in self.stones]) +
+    #             ", neibors:" + str([str(p) for p in self.neighbors]) +
+    #             " }")
+
+int64_high = 2**63 - 1
+int64_low = -(2**63)
+ZOBRIST_INIT = np.random.randint(int64_low, int64_high, dtype=np.int64)
+# for grid positions
+ZOBRIST_GRID = np.random.randint(int64_low, int64_high, size=(19, 19, 3), dtype=np.int64)
+# for b_captured, w_captured, next
+ZOBRIST_NEXT = np.random.randint(int64_low, int64_high, dtype=np.int64)
+
+def board_from_state(state):
+    return Board(state = state)
 
 class Board(object):
-    def __init__(self, size=19, komi=6.5, is_debug=False):
+    def __init__(self, size=19, komi=6.5, state=None, is_debug=False):
         """Create and initialize an empty board."""
         # grid is a numpy array representation of the board
-        # empty = (0, 0) black = (True, 0) white = (0, 1)
-        self.size = size
-        self.komi = komi
-        self.grid = np.zeros((self.size, self.size, 2))
-        self.groups = set()
+        # empty = (0.0, 0.0) black = (1.0, 0) white = (0.0, 1.0)
 
-        self.neighors = {
-            (x, y) : 
-            frozenset(filter(self.bound, [(x-1,y), (x+1,y), (x,y-1), (x,y+1)])) 
-            for x in range(size) for y in range(size)
-        }
-        self.all_points = frozenset([
-            (i,j)
-            for i in range(self.size)
-            for j in range(self.size)
-            if sum(self.grid[i,j]) == 0
-        ])
-        
-        self.b_captured = 0
-        self.w_captured = 0
-        self.next = BLACK
-        self.log = [] # (color, point, board_hash)
-
+        if state is not None:
+            self.from_state(state)
+            self.b_captured = 0
+            self.w_captured = 0
+        else:
+            self.size = size
+            self.komi = komi
+            self.grid = np.zeros((self.size, self.size, 2))
+            self.groups = set()
+            self.next = BLACK
+            self.neighbors = {
+                (x, y) : 
+                frozenset(filter(self.bound, [(x-1,y), (x+1,y), (x,y-1), (x,y+1)])) 
+                for x in range(self.size) for y in range(self.size)
+            }
+            self.all_points = frozenset([
+                (i, j)
+                for i in range(self.size)
+                for j in range(self.size)
+            ])
+            self.log = []
+            self.b_captured = 0
+            self.w_captured = 0
+            
         self.same_state_illegal = set()
         self.suicide_illegal = set()
-
-        self.zobrist_init = np.random.randint(9223372036854775807, dtype=np.int64) # 2^63 - 1
-        # for grid positions
-        self.zobrist_grid = np.random.randint(9223372036854775807, size=(self.size, self.size, 3), dtype=np.int64)
-        # for b_captured, w_captured, next
-        self.zobrist_next = np.random.randint(9223372036854775807, dtype=np.int64)
         self.outputDebug = is_debug
+
+    def to_state(self):
+        return [self.size, self.komi, self.grid.tobytes(), self.groups.copy(), self.next, self.neighbors, self.all_points, self.log] # keep last 8 moves
+
+    def from_state(self, state):
+        self.size = state[0]
+        self.komi = state[1]
+        self.grid = np.fromstring(state[2])
+        self.grid.resize((self.size, self.size, 2))
+        self.groups = state[3].copy()
+        self.next = state[4]
+        self.neighbors = state[5]
+        self.all_points = state[6]
+        self.log = state[7]
 
     def bound(self, p):
         return 0 <= p[0] < self.size and 0 <= p[1] < self.size 
 
     # Zobrist Hash
     def grid_hash(self):
-        zhash = self.zobrist_init
-        for i in range(self.size):
-            for j in range(self.size):
-                if self.grid[i, j, 0] == 1:
-                    zhash ^= self.zobrist_grid[i, j, 0]
-                elif self.grid[i, j, 1] == 1:
-                    zhash ^= self.zobrist_grid[i, j, 1]
-                else:
-                    zhash ^= self.zobrist_grid[i, j, 2]
-        if self.next == WHITE:
-            zhash ^= self.zobrist_next
-        return zhash
+        bool_grid_flat = self.grid.astype(bool).ravel()
+        bool_grid_flat = np.append(bool_grid_flat, bool(self.next))
+        bool_grid_bytes = np.argwhere(bool_grid_flat).ravel().tobytes()
+        return bool_grid_bytes
 
     def has_stone(self, point):
         return sum(self.grid[point]) == 1
@@ -155,8 +161,8 @@ class Board(object):
         
         if len(killed_nb_enemy_group) == 0:
             self.handle_suicide_illegal(new_point)
-            if self.outputDebug:
-                print("illegal: suicidal move")
+            # if self.outputDebug:
+            #     print("illegal: suicidal move")
             return False
         
         # temporary take off "dead" stones from grid to see if that would make same state
@@ -178,8 +184,8 @@ class Board(object):
         
         if same_state:
             self.handle_same_state_illegal(new_point)
-            if self.outputDebug:
-                print("illegal: same board state")
+            # if self.outputDebug:
+            #     print("illegal: same board state")
             return False
         # suicide & kill enemy & no same state
         self.handle_same_state_illegal(None)
@@ -232,7 +238,7 @@ class Board(object):
         # record neighbor groups
         nb_friend_groups = set()
         nb_enemy_groups = set()
-        for nbp in self.neighors[point]:
+        for nbp in self.neighbors[point]:
             if sum(self.grid[point]) == 0: continue # has no stone
             for g in self.groups:
                 if nbp in g.stones:
@@ -245,7 +251,7 @@ class Board(object):
         # create a temporary stone group from the adding stone
         # because we didn't check legality yet
         new_group_stones = set([point])
-        new_group_neighbors = set(self.neighors[point])
+        new_group_neighbors = set(self.neighbors[point])
         # merge neighbor groups into self temp group
         for nbfg in nb_friend_groups:
             new_group_stones.update(nbfg.stones)
@@ -268,7 +274,7 @@ class Board(object):
         self.update_capture(nb_enemy_groups)
         self.log.append((self.next, point, self.grid_hash()))
         self.turn()
-        if self.outputDebug: self.debugPrint()
+        # if self.outputDebug: self.debugPrint()
         return True
 
     def log_endgame(self, winner, reason):
@@ -361,7 +367,7 @@ class Board(object):
                         reach_color = NEUTRAL
                         break
                     else:
-                        for nbp in self.neighors[search_p]:
+                        for nbp in self.neighbors[search_p]:
                             if nbp not in searched:
                                 expander.add(nbp)
             searched.update(expander)
@@ -383,7 +389,7 @@ class Board(object):
         # score = stones on board + territory + captured + komi(6.5) if white
         w_score = np.sum(self.grid[:,:,WHITE]==1) + len(w_territory) + self.komi    
         b_score = np.sum(self.grid[:,:,BLACK]==1) + len(b_territory)
-        
+        score_diff = b_score - w_score
         if b_score > w_score:
             winner = BLACK
         else:
@@ -407,8 +413,92 @@ class Board(object):
                         output_str += "  "
                 output_str += "\n"
             output_str += "B:" + str(b_score) + " W:" + str(w_score) + (" B" if b_score > w_score else " W") + " win"
-            return winner, b_score, w_score, output_str
+            return winner, score_diff, output_str
         else:
-            return winner, b_score, w_score
+            return winner, score_diff
     # end def cal_score
+
+    '''
+    Territory Evaluation Algorithm from
+    Bouzy, B. (2003). Mathematical Morphology Applied to Computer Go. Int. J. Pattern Recognit. Artif. Intell., 17, 257-268.
+
+    # Defination
+
+    A = set of elements
+    Dilation: D(A) = A + neigbors of A
+    Erosion: E(A) = A - neighbors of complements of A
+    External Boundary: ExtBound(A) = D(A) - A
+    Internal Boundary: IntBound(A) = A - E(A)
+    Closing: Close(A) = E(D(A))
+    Cloasing is safe territory
+    Terriorty Potential Evaluation Operator X(e, d) = E^e . D^d
+    X(e, d) is the operation that do dilation d times and then erosion e times
+
+    # Zobrist's Model To Recognize "Influence"
+    assign +64/-64 to black/white points, and 0 elsewhere
+    for p in every points:
+        for n in neighbors of p:
+            if n < 0
+                p -= 1
+            elif n > 0
+                p += 1
+
+    The Zobrist model above has similar effect as dilation.
+    So defined that operator as Dz
+    then define Ez in an analogous way:
+    for p in every points:
+        for n in neighbors of p:
+            if color[n] != color[p]:
+                if p > 0:
+                    p -= 1
+                elif p < 0:
+                    p += 1
+
+    It is figured that if there ia only one stone on board
+    the operater X(e, d) must give same result as identity operator
+    Thus e = d * (d - 1) + 1
+
+    It found out that X gives better result when d = 4 or 5
+    The bigger "d" is , the larger the scale of recognization territories is
+    '''    
+
+    def eval(self):
+        eval_grid = np.zeros((self.size, self.size))
+        eval_grid[self.grid[:,:,BLACK] == 1] = 64
+        eval_grid[self.grid[:,:,WHITE] == 1] = -64
+
+        if np.sum(self.grid) > self.size * self.size / 3:
+            d = 4
+            e = 13
+        else:
+            d = 5
+            e = 21
+        
+        # Dilate
+        for _ in range(d):
+            new_eval_grid = eval_grid.copy()
+            for p in self.all_points:
+                for n in self.neighbors[p]:
+                    if eval_grid[n] > 0:
+                        new_eval_grid[p] += 1
+                    elif eval_grid[n] < 0:
+                        new_eval_grid[p] -= 1
+            eval_grid = new_eval_grid
+        
+        # Erase
+        for _ in range(e):
+            new_eval_grid = eval_grid.copy()
+            for p in self.all_points:
+                if eval_grid[p] == 0: continue
+                i = 1 if eval_grid[p] > 0 else -1
+                for n in self.neighbors[p]:
+                    if eval_grid[n] * eval_grid[p] <= 0: # if different color
+                        new_eval_grid[p] -= i
+                        if new_eval_grid[p] == 0: break
+            eval_grid = new_eval_grid
+        
+        b_potentials = np.sum(eval_grid > 0)
+        w_potentials = np.sum(eval_grid < 0) + self.komi
+
+        return b_potentials, w_potentials
 # end class Board

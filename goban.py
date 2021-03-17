@@ -16,12 +16,13 @@ import pickle
 import numpy as np
 from copy import deepcopy 
 import go
+from board_eval import board_eval
 from time import time
 import random
 from sys import exit, getsizeof
 
 BACKGROUND = 'images/ramin.jpg'
-BOARD_SIZE = 9
+BOARD_SIZE = 19
 KOMI = 6.5
 GRID_SIZE = 25
 DRAW_BOARD_SIZE = (GRID_SIZE * BOARD_SIZE + GRID_SIZE, GRID_SIZE * BOARD_SIZE + GRID_SIZE)
@@ -37,9 +38,9 @@ class Stone(go.Stone):
         board.draw_stones()
 
 class Board(go.Board):
-    def __init__(self, debug):
+    def __init__(self, is_debug):
         """Create, initialize and draw an empty board."""
-        super(Board, self).__init__(BOARD_SIZE, 6.5, debug)
+        super(Board, self).__init__(BOARD_SIZE, 6.5, is_debug=is_debug)
         self.outline = pygame.Rect(GRID_SIZE+5, GRID_SIZE+5, DRAW_BOARD_SIZE[0]-GRID_SIZE*2, DRAW_BOARD_SIZE[1]-GRID_SIZE*2)
         self.draw_board()
 
@@ -79,7 +80,6 @@ class Board(go.Board):
 
 def main():
     #measure_times = []
-    board_states = []
     while True:
         pygame.time.wait(250)
         for event in pygame.event.get():
@@ -91,12 +91,23 @@ def main():
                     y = int(round(((event.pos[1]-GRID_SIZE-5) / GRID_SIZE), 0))
                     print(x, y)
                     added_stone = Stone(board, (x, y))
+                    w, b = board.eval()
+                    outstring = ""
+                    for i in range(BOARD_SIZE):
+                        for j in range(BOARD_SIZE):
+                            if eval_grid[j, i] > 0:
+                                outstring += "X "
+                            elif eval_grid[j, i] < 0:
+                                outstring += "O "
+                            else:
+                                outstring += "  "
+                        outstring += "\n"
+                    print(outstring)
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_p:
-                    winner, b, w, out_str = board.score(output=True)
+                    winner, score_diff, out_str = board.score(output=True)
                     print(out_str)
                     #print(np.sum(measure_times), np.mean(measure_times), np.std(measure_times))
-                    #print(getsizeof(board_states))
                     return
     
 if __name__ == '__main__':
@@ -104,5 +115,5 @@ if __name__ == '__main__':
     pygame.display.set_caption('Goban')
     screen = pygame.display.set_mode(DRAW_BOARD_SIZE, 0, 32)
     background = pygame.image.load(BACKGROUND).convert()
-    board = Board(debug = False)
+    board = Board(is_debug = False)
     main()

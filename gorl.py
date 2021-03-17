@@ -4,21 +4,22 @@ from time import time, strftime
 import pygame
 import go
 import playmodel
+import cProfile
 from sys import exit
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--epochs", "-e", default=10000, type=int)
 parser.add_argument("--out-intv", "-o", dest="out_intv", default=1000, type=int)
 parser.add_argument("--size", "-s", dest="size", default=19, type=int)
-parser.add_argument("--playout", "-p", dest="playouts", default=1024, type=int)
+parser.add_argument("--playout", "-p", dest="playouts", default=800, type=int)
 parser.add_argument("--use-model", "-m", dest="use_model", type=str, default="", action="store")
-parser.add_argument("--self-play", dest="self_play", action="store_true")
+parser.add_argument("--selfplay", "-S", dest="self_play", action="store_true")
 parser.add_argument("--test", type=str, default="", action="store")
 args = parser.parse_args()
 
 EPOCHS = args.epochs
-LAERN_THRESHOLD = 10
 TRAIN_RECORD_SIZE = 4
+LAERN_THRESHOLD = TRAIN_RECORD_SIZE * 5
 TEST_ONLY = (args.test == "b" or args.test == "w")
 PRINT_INTV = args.out_intv
 
@@ -40,6 +41,9 @@ elif BOARD_SIZE <= 13:
     KOMI = 7.5
 else:
     KOMI = 6.5
+
+print("Board size:", BOARD_SIZE)
+print("Komi:", KOMI)
 
 class Stone(go.Stone):
     def __init__(self, board, point):
@@ -100,42 +104,38 @@ class Board(go.Board):
         for entry in self.log:
             logstr += COLOR_CHAR[entry[0]] + " " + str(entry[1]) + "\n"
         logfile.write(logstr)
-        win, w, b, outstr = self.score(output=True)
+        win, score_diff, outstr = self.score(output=True)
         logfile.write(outstr+"\n")
 
 def train():
     open("log.txt", "w")
     record_times = []
     b_win_count = 0
-    record_as = BLACK
-    playout = args.playouts
-    playout_diff = 1
-    playout_limit = args.playouts / 2
+    playout = args.playouts // 4
+    playout_increase = 0.5
+    playout_limit = args.playouts
 
     for epoch in range(EPOCHS):
-        playout = max(playout-playout_diff, playout_limit)
         #temperature = 1.0
         steps = 0
         pass_count = 0
         winner = None
-        b_score = 0
-        w_score = 0
-        reward = 0 # black: positive; white: negtive
-        # because same board's reward of BLACK == -reward of WHITE
-        # have to record seperatly 
-        #record_as = WHITE if record_as == BLACK else BLACK
-        #model.set_record_player(record_as)
+        reward = 0 # reward is viewed from BLACK
         while (steps <= MAX_STEP):
-            temperature = (1 + 1/BOARD_SIZE) ** -steps
+            playout = max(playout+playout_increase, playout_limit) # more step, less playout
+            temperature = (1 + 1/BOARD_SIZE) ** -steps # more step, less temperature
+
             t = time()
             play_as = board.next
             pre_grid = board.grid.copy()
-            x, y, value = model.decide_monte_carlo(board, playout, temperature)
-            #x, y, value = model.decide_minimax(board, depth=1, kth=4)
+            x, y, mcts_policy = model.decide_monte_carlo(board, playout, temperature)
             #x, y, instinct = model.decide_instinct(board, temperature)
-            if x >= BOARD_SIZE or y >= BOARD_SIZE:
+            if y == BOARD_SIZE: # pass = size_square -> y = pass//BOARD_SIZE = BOARD_SIZE
                 pass_count += 1
                 board.pass_move()
+            elif y < 0: # resign = -1 -> y = resign//BOARD_SIZE = -1
+                pass_count += 2
+                board.log_endgame(play_as, "resign")
             else:
                 added_stone = Stone(board, (x, y))
                 if added_stone.islegal:
@@ -143,53 +143,51 @@ def train():
                 else:
                     continue
             record_times.append(time()-t)
+
             if pass_count >= 2 or steps == MAX_STEP:
-                winner, b_score, w_score = board.score()
-                reward = 1 if play_as == winner else -1 # if use tanh
-                #reward = 1 if play_as == winner else 0 # if use sigmoid
-                #reward = b_score - w_score
-                board.log_endgame(winner, "by " + str(b_score - w_score))
+                winner, score_diff = board.score()
+                reward = 1 if winner == BLACK else -1 # reward is viewd from BLACK
+                board.log_endgame(winner, "by " + str(score_diff))
                 if winner == BLACK:
                     b_win_count += 1
                 
             if winner is not None:
-                if winner != record_as: model.pop_step()
-                model.push_step((x, y), pre_grid, board.grid, reward)
+                model.push_step(pre_grid, mcts_policy)
                 #print("reward:", reward, "steps", steps)
                 break
-            elif play_as == record_as:
-            #else:
-                model.push_step((x, y), pre_grid, board.grid, reward)
+            else:
+                model.push_step(pre_grid, mcts_policy)
             steps += 1
         # end while game
         #temperature = max(min_temperature, initial_temperature / (1 + temperature_decay * epoch))
-        model.enqueue_new_record()
+        model.enqueue_new_record(reward)
         model.monte_carlo.clear_visit()
         if epoch > LAERN_THRESHOLD:
             model.learn(learn_record_size=TRAIN_RECORD_SIZE, verbose=((epoch+1)%PRINT_INTV==0))
         
         if (epoch+1) % PRINT_INTV == 0:
-            model.save("model-tmp.h5")
+            model.save(str(BOARD_SIZE)+"_tmp.h5")
             print("epoch: %d\t B win rate: %.3f"%(epoch, b_win_count/(epoch+1)))
             board.write_game_log(open("log.txt", "a"))
             print("decide + update time", np.sum(record_times), np.mean(record_times), np.std(record_times))
         board.clear()
     # end for epochs
-    print(strftime("%Y%m%d%H%M"))
-    model.save("model_"+strftime("%Y%m%d%H%M")+".h5")
+    print(strftime(str(BOARD_SIZE)+"_%Y%m%d%H%M"))
+    model.save(strftime(str(BOARD_SIZE)+"_%Y%m%d%H%M")+".h5")
 
 def test(ai_play_as):
     print("begin test")
     playout = args.playouts
-    playout_decrease = 1
+    playout_increase = 1
     playout_limit = args.playouts / 2
     pass_count = 0
+    steps = 0
     while True:
         pygame.time.wait(250)
         if ai_play_as == board.next:
-            #print("value:", model.get_value(board.grid))
-            #print("instinct:", model.get_intuitions(board.grid))
-            x, y, value = model.decide_minimax(board, depth=4, kth=4)
+            playout = max(playout-playout_increase, playout_limit)
+            x, y, policy = model.decide_monte_carlo(board, playout)
+            value = policy[x+BOARD_SIZE*y]
             if x >= BOARD_SIZE or y >= BOARD_SIZE:
                 print("model passes\tvalue:%.3f"%(value))
                 pass_count += 1
@@ -201,7 +199,7 @@ def test(ai_play_as):
                 if not added_stone.islegal:
                     print("model tried illegal move")
                     break
-            playout = max(playout-playout_decrease, playout_limit)
+            steps += 1
         else:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -212,8 +210,8 @@ def test(ai_play_as):
                         y = int(round(((event.pos[1]-GRID_SIZE-5) / GRID_SIZE), 0))
                         added_stone = Stone(board, (x, y))
                         pass_count = 0
-                        value = model.get_value(board.grid)
-                        print("player choose (%d, %d)\tvalue:%.3f"%(x, y, value))
+                        steps += 1
+                        print("player choose (%d, %d)"%(x, y))
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_p:
                         pass_count += 1
@@ -221,15 +219,15 @@ def test(ai_play_as):
         if pass_count >= 2:
             break
     print("game over")
-    winner, b, w, out_str = board.score(output=True)
+    winner, score_diff, out_str = board.score(output=True)
     print(out_str)
     # end while True
 
 def self_play():
     print("begin self play")
-    playout = args.playouts
-    playout_decrease = 1
-    playout_limit = args.playouts / 2
+    playout = args.playouts // 4
+    playout_increase = 1
+    playout_limit = args.playouts
     pass_count = 0
     measure_times = []
     game_over = False
@@ -243,30 +241,38 @@ def self_play():
                     game_over = True
                     continue
                 t=time()
-                x, y, value = model.decide_monte_carlo(board, playout)
+                cProfile.run("x, y, policy = model.decide_monte_carlo(board, args.playouts)", "mcts_search.profile")
+                #x, y, policy = model.decide_monte_carlo(board, playout)
                 print(time()-t)
                 measure_times.append(time()-t)
-                #x, y, value = model.decide_instinct(board, 0.1)
-                if x >= BOARD_SIZE or y >= BOARD_SIZE:
-                    pass_count += 1
-                    if pass_count >= 2: break
+                if y == BOARD_SIZE:
                     board.pass_move()
                     play_as = "B" if board.next == WHITE else "W"
-                    print(play_as, "pass\tvalue:%.3f"%(value))
+                    intuition = policy[x+BOARD_SIZE*y]
+                    print(play_as, "pass\t intuition:%.3f"%(intuition))
+                    pass_count += 1
+                    if pass_count >= 2: break
+                elif y < 0:
+                    board.pass_move()
+                    play_as = "B" if board.next == WHITE else "W"
+                    print(play_as, "resigned")
+                    game_over = True
                 else:
                     added_stone = Stone(board, (x, y))
                     if not added_stone.islegal:
-                        print(play_as, "tried illegal move (%d, %d)\t value:%.3f"%(x, y, value))
+                        value = policy[x+BOARD_SIZE*y]
+                        print("B" if play_as == "W" else "W", "tried illegal move (%d, %d)\t value:%.3f"%(x, y, value))
                         # game_over = True
                         # break
                     else:
                         pass_count = 0
                         play_as = "B" if board.next == WHITE else "W"
-                        print(play_as, "choose (%d, %d)\t value:%.3f"%(x, y, value))
-                playout = max(playout-playout_decrease, playout_limit)
+                        intuition = policy[x+BOARD_SIZE*y]
+                        print(play_as, "choose (%d, %d)\t intuition:%.3f"%(x, y, intuition))
+                playout = max(playout+playout_increase, playout_limit)
                 
     print("game over")
-    winner, b, w, out_str = board.score(output=True)
+    winner, score_diff, out_str = board.score(output=True)
     print(out_str)
     print("decision time", np.sum(measure_times), np.mean(measure_times), np.std(measure_times))
 
