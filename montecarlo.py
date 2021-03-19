@@ -2,6 +2,9 @@ import gc
 from go import Stone, board_from_state, WHITE, BLACK
 from time import time
 import numpy as np
+from ctypes import c_double, c_uint, c_int, POINTER, CDLL
+
+_c_uct = CDLL("uct.dll").uct
 
 def masked_softmax(valid_mask, x):
     # astype("float64") because numpy's multinomial convert array to float64 after pval.sum()
@@ -38,12 +41,14 @@ class MonteCarloNode():
         """
             UCT is upper confience bound of v
             UCT[a] = Q[a] + P[a] where P is exploitation score
-            P[a] = c_put * sqrt(ln(sum(N)) / N[a])
-            c_put is coefficent, it controls the exploration rate
+            P[a] = cput * sqrt(ln(sum(N)) / N[a])
+            cput is coefficent, it controls the exploration rate
             1.4 is recommend in [0, 1] valued environment
             1.5~3.0 are used in [-1, 1] valued environment
         """
-        self.Q = np.full(action_size, -1e10, dtype=float) # expected value of an action from this node's perspective
+        self.U = np.full(action_size, -1e6, dtype=float)
+        self.U[children_actions] = 0
+        self.Q = np.full(action_size, -1e6, dtype=float) # expected value of an action from this node's perspective
         self.Q[children_actions] = 0
         self.N = np.zeros(action_size, dtype="int16") # number of times that this node take path to an action
 
@@ -55,7 +60,8 @@ class MonteCarlo():
         self.action_size = self.size_square + 1
         self.root = None
         self.playout_limit = 0 # reset every time search method
-        self.c_put = 1.5
+        self.cput = 1.5
+        _c_uct.restype = POINTER(c_double * self.action_size)
         self.simulation_num = simulation_num
         self.simulation_depth = simulation_depth
         print("Monte Carlo Simulation Times / Depth:", simulation_num, simulation_depth)
@@ -138,26 +144,20 @@ class MonteCarlo():
         is_terminal = False
         while True:
             best_a = -1
-            with np.errstate(divide="ignore", invalid="ignore"):
-                U = curnode.Q + np.nan_to_num(self.c_put * np.sqrt(np.log(np.sum(curnode.N)) / curnode.N), posinf=2.0)
-            max_a = np.argwhere(U == np.max(U)).ravel()
+            # print(curnode.U)
+            max_a = np.argwhere(curnode.U == np.max(curnode.U)).flatten()
             best_a = np.random.choice(max_a)
             # check two consecutive pass
             is_terminal = (best_a == prev_action and best_a == self.size_square)
             if is_terminal:
                 break
             # check if not 
-            try:
-                if curnode.children[best_a] is None: 
-                    break
-                else:
-                    curnode = curnode.children[best_a]
-                    prev_action = best_a
-            except:
-                print(curnode.Q)
-                print(best_a)
-                print(list(curnode.children.keys()))
-                exit()
+        
+            if curnode.children[best_a] is None: 
+                break
+            else:
+                curnode = curnode.children[best_a]
+                prev_action = best_a
         # traverse to an unexpanded node
         # print("selected path:", action_path)
         return curnode, best_a, is_terminal
@@ -200,7 +200,8 @@ class MonteCarlo():
         else:
             # delete this child's info
             del leaf_node.children[leaf_action]
-            leaf_node.Q[leaf_action] = -1e10
+            leaf_node.Q[leaf_action] = -1e6
+            leaf_node.U[leaf_action] = -1e6
             leaf_node.N[leaf_action] = 0
             # re-dump board state for its illegal record,
             # it can reduce some illegal children in endgame point expand
@@ -252,6 +253,12 @@ class MonteCarlo():
             sim_values.append(v)
         return np.mean(sim_values)
 
+    def uct(self, node):
+        Q_c_arr = (c_double * self.action_size) (* node.Q.tolist())
+        N_c_arr = (c_int * self.action_size) (* node.N.tolist())
+        result_ptr = _c_uct(Q_c_arr, N_c_arr, c_double(self.cput), c_double(1.0), c_uint(self.action_size))
+        node.U = np.frombuffer(result_ptr.contents, dtype=float)
+
     def backpropagate(self, leaf_node, value):
         # print("bp with value:", value)
         a = leaf_node.parent_action
@@ -259,6 +266,9 @@ class MonteCarlo():
         while curnode is not None:
             curnode.Q[a] = (value + curnode.N[a] * curnode.Q[a]) / (curnode.N[a] + 1)
             curnode.N[a] += 1
+
+            self.uct(curnode)
+
             a = curnode.parent_action
             curnode = curnode.parent
             value = -value # switch side
