@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 import numpy as np
+from ctypes import c_int, POINTER, CDLL
 
 """Go library
 
@@ -9,6 +10,8 @@ __version__ = "0.1"
 
 Edited by leow774
 """
+
+_c_board_eval = CDLL("./board_eval.dll")._board_eval
 
 BLACK = 0
 WHITE = 1
@@ -35,13 +38,13 @@ class Group:
     #             ", neibors:" + str([str(p) for p in self.neighbors]) +
     #             " }")
 
-int64_high = 2**63 - 1
-int64_low = -(2**63)
-ZOBRIST_INIT = np.random.randint(int64_low, int64_high, dtype=np.int64)
-# for grid positions
-ZOBRIST_GRID = np.random.randint(int64_low, int64_high, size=(19, 19, 3), dtype=np.int64)
-# for b_captured, w_captured, next
-ZOBRIST_NEXT = np.random.randint(int64_low, int64_high, dtype=np.int64)
+# int64_high = 2**63 - 1
+# int64_low = -(2**63)
+# ZOBRIST_INIT = np.random.randint(int64_low, int64_high, dtype=np.int64)
+# # for grid positions
+# ZOBRIST_GRID = np.random.randint(int64_low, int64_high, size=(19, 19, 3), dtype=np.int64)
+# # for b_captured, w_captured, next
+# ZOBRIST_NEXT = np.random.randint(int64_low, int64_high, dtype=np.int64)
 
 def board_from_state(state):
     return Board(state = state)
@@ -54,12 +57,10 @@ class Board(object):
 
         if state is not None:
             self.from_state(state)
-            self.b_captured = 0
-            self.w_captured = 0
         else:
             self.size = size
             self.komi = komi
-            self.grid = np.zeros((self.size, self.size, 2))
+            self.grid = np.zeros((self.size, self.size), dtype=int)
             self.groups = set()
             self.next = BLACK
             self.neighbors = {
@@ -73,21 +74,22 @@ class Board(object):
                 for j in range(self.size)
             ])
             self.log = []
-            self.b_captured = 0
-            self.w_captured = 0
-            
+        
+        # self.b_captured = 0
+        # self.w_captured = 0
         self.same_state_illegal = set()
         self.suicide_illegal = set()
         self.outputDebug = is_debug
 
+
     def to_state(self):
-        return [self.size, self.komi, self.grid.tobytes(), self.groups.copy(), self.next, self.neighbors, self.all_points, self.log] # keep last 8 moves
+        return [self.size, self.komi, self.grid.tobytes(), self.groups.copy(), self.next, self.neighbors, self.all_points, self.log.copy()] # keep last 8 moves
 
     def from_state(self, state):
         self.size = state[0]
         self.komi = state[1]
-        self.grid = np.fromstring(state[2])
-        self.grid.resize((self.size, self.size, 2))
+        self.grid = np.fromstring(state[2], dtype=int)
+        self.grid.resize((self.size, self.size))
         self.groups = state[3].copy()
         self.next = state[4]
         self.neighbors = state[5]
@@ -97,27 +99,21 @@ class Board(object):
     def bound(self, p):
         return 0 <= p[0] < self.size and 0 <= p[1] < self.size 
 
-    # Zobrist Hash
     def grid_hash(self):
         bool_grid_flat = self.grid.astype(bool).ravel()
         bool_grid_flat = np.append(bool_grid_flat, bool(self.next))
         bool_grid_bytes = np.argwhere(bool_grid_flat).ravel().tobytes()
         return bool_grid_bytes
-
-    def has_stone(self, point):
-        return sum(self.grid[point]) == 1
         
     def update_grid(self, point, color=None):
         # asterick mean tuple unpack
         x, y = point
         if color == BLACK:
-            self.grid[x, y, WHITE] = 0
-            self.grid[x, y, BLACK] = 1
+            self.grid[x, y] = 1
         elif color == WHITE:
-            self.grid[x, y, WHITE] = 1
-            self.grid[x, y, BLACK] = 0
+            self.grid[x, y] = -1
         else:
-            self.grid[x, y] = [0, 0]
+            self.grid[x, y] = 0
     
     def handle_same_state_illegal(self, adding_point):
         """
@@ -148,7 +144,7 @@ class Board(object):
             return False
 
         # check suicide move
-        if not all([self.has_stone(p) for p in new_group.neighbors]): # no suicide, no problem
+        if not all([self.grid[p] for p in new_group.neighbors]): # no suicide, no problem
             self.handle_same_state_illegal(None)
             self.handle_suicide_illegal(None)
             return True
@@ -156,7 +152,7 @@ class Board(object):
         killed_nb_enemy_group = set()
         # only want to know if enemy ki == 0
         for nbeg in nb_enemy_groups:
-            if all([self.has_stone(p) for p in nbeg.neighbors]):
+            if all([self.grid[p] for p in nbeg.neighbors]):
                 killed_nb_enemy_group.add(nbeg)
         
         if len(killed_nb_enemy_group) == 0:
@@ -165,6 +161,14 @@ class Board(object):
             #     print("illegal: suicidal move")
             return False
         
+        # if more than 1 stone killed then it won't be same state
+        if len(killed_nb_enemy_group) > 1:
+            return True
+        else:
+            (the_dead_nbeg,) = killed_nb_enemy_group # use tuple unpacking to extract the only element
+            if len(the_dead_nbeg.stones) > 1:
+                return True
+
         # temporary take off "dead" stones from grid to see if that would make same state
         for dead_nbeg in killed_nb_enemy_group:
             for s in dead_nbeg.stones:
@@ -172,9 +176,9 @@ class Board(object):
         # check latest previous 6 board state (preventing n-ko rotation, n <= 3)
         same_state_rewind_limit = 6
         same_state = False
-        zhash = self.grid_hash()
+        ghash = self.grid_hash()
         for entry in self.log[-same_state_rewind_limit:]:
-            if entry[2] == zhash and entry[2] != -1: # -1 means it was passed: no same state check require
+            if entry[2] == ghash and entry[2] != -1: # -1 means it was passed: no same state check require
                 same_state = True
                 break
         # recover grid
@@ -198,30 +202,17 @@ class Board(object):
         # only look around new point
         dead_groups = set()
         for g in nb_enemy_groups:
-            if all([self.has_stone(p) for p in g.neighbors]):
+            if all([self.grid[p] for p in g.neighbors]):
                 dead_groups.add(g)
         
         for dg in dead_groups:
-            if dg.color == WHITE:
-                self.w_captured += len(dg.stones)
-            else:
-                self.b_captured += len(dg.stones)
+            # if dg.color == WHITE:
+            #     self.w_captured += len(dg.stones)
+            # else:
+            #     self.b_captured += len(dg.stones)
             for s in dg.stones:
                 self.update_grid(s, None)
         self.groups = self.groups - dead_groups
-    
-    def pass_move(self):
-        self.log.append((self.next, "pass", -1))
-        self.turn()
-
-    def turn(self):
-        """Keep track of the turn by flipping between BLACK and WHITE."""
-        if self.next == BLACK:
-            self.next = WHITE
-            return BLACK
-        else:
-            self.next = BLACK
-            return WHITE
     
     def add_stone(self, point):
         """
@@ -231,7 +222,7 @@ class Board(object):
         return true if successfully add a stone in a legal place  
                false if not success  
         """
-        if sum(self.grid[point]) == 1: # has stone
+        if self.grid[point]: # has stone
             return False
         self.update_grid(point, self.next)
 
@@ -239,7 +230,7 @@ class Board(object):
         nb_friend_groups = set()
         nb_enemy_groups = set()
         for nbp in self.neighbors[point]:
-            if sum(self.grid[point]) == 0: continue # has no stone
+            if not self.grid[point]: continue # has no stone
             for g in self.groups:
                 if nbp in g.stones:
                     if g.color == self.next:
@@ -263,8 +254,7 @@ class Board(object):
                         self.next)
         self.groups.add(new_group)
         
-        islegal = self.check_legal(point, new_group, nb_enemy_groups)
-        if (not islegal):
+        if (not self.check_legal(point, new_group, nb_enemy_groups)):
             # delete temp adding group
             self.groups.remove(new_group)
             self.update_grid(point, None)
@@ -277,16 +267,29 @@ class Board(object):
         # if self.outputDebug: self.debugPrint()
         return True
 
+    def pass_move(self):
+        self.log.append((self.next, "pass", -1))
+        self.turn()
+
+    def turn(self):
+        """Keep track of the turn by flipping between BLACK and WHITE."""
+        if self.next == BLACK:
+            self.next = WHITE
+            return BLACK
+        else:
+            self.next = BLACK
+            return WHITE
+
     def log_endgame(self, winner, reason):
         self.log.append((winner, reason, -1))
 
     def clear(self):
         self.groups = set()
-        self.grid = np.zeros((self.size, self.size, 2))
+        self.grid = np.zeros((self.size, self.size), dtype=int)
         self.next = BLACK
         self.log = []
-        self.b_captured = 0
-        self.w_captured = 0
+        # self.b_captured = 0
+        # self.w_captured = 0
         self.same_state_illegal = set()
         self.suicide_illegal = set()
     
@@ -298,9 +301,9 @@ class Board(object):
         for i in range(self.size):
             for j in range(self.size):
                 p = (j, i)
-                if self.grid[p][WHITE]:
+                if self.grid[p] < 0:
                     output_str += "O "
-                elif self.grid[p][BLACK]:
+                elif self.grid[p] > 0:
                     output_str += "X "
                 else:
                     output_str += "  "
@@ -345,12 +348,12 @@ class Board(object):
             while len(expander) > 0 and reach_color != NEUTRAL:
                 search_p = expander.pop()
                 #print("searched", search_p)
-                if self.grid[search_p][BLACK]: # is black stone
+                if self.grid[search_p] > 0: # is black stone
                     if reach_color == None:
                         reach_color = BLACK
                     elif reach_color == WHITE:
                         reach_color = NEUTRAL
-                elif self.grid[search_p][WHITE]: # is white stone
+                elif self.grid[search_p] < 0: # is white stone
                     if reach_color == None:
                         reach_color = WHITE
                     elif reach_color == BLACK:
@@ -387,8 +390,8 @@ class Board(object):
         # b_score = len(b_living_stones) + len(b_territory) + len(w_dead_stones) + self.w_captured
 
         # score = stones on board + territory + captured + komi(6.5) if white
-        w_score = np.sum(self.grid[:,:,WHITE]==1) + len(w_territory) + self.komi    
-        b_score = np.sum(self.grid[:,:,BLACK]==1) + len(b_territory)
+        w_score = np.sum(self.grid < 0) + len(w_territory) + self.komi    
+        b_score = np.sum(self.grid > 0) + len(b_territory)
         score_diff = b_score - w_score
         if b_score > w_score:
             winner = BLACK
@@ -405,9 +408,9 @@ class Board(object):
                         output_str += "c "
                     elif p in b_territory:
                         output_str += "v "
-                    elif self.grid[p][WHITE]:
+                    elif self.grid[p] < 0:
                         output_str += "O "
-                    elif self.grid[p][BLACK]:
+                    elif self.grid[p] > 0:
                         output_str += "X "
                     else:
                         output_str += "  "
@@ -462,43 +465,30 @@ class Board(object):
     The bigger "d" is , the larger the scale of recognization territories is
     '''    
 
-    def eval(self):
-        eval_grid = np.zeros((self.size, self.size))
-        eval_grid[self.grid[:,:,BLACK] == 1] = 64
-        eval_grid[self.grid[:,:,WHITE] == 1] = -64
-
+    def eval(self, output=False):
+        
         if np.sum(self.grid) > self.size * self.size / 3:
             d = 4
-            e = 13
         else:
             d = 5
-            e = 21
-        
-        # Dilate
-        for _ in range(d):
-            new_eval_grid = eval_grid.copy()
-            for p in self.all_points:
-                for n in self.neighbors[p]:
-                    if eval_grid[n] > 0:
-                        new_eval_grid[p] += 1
-                    elif eval_grid[n] < 0:
-                        new_eval_grid[p] -= 1
-            eval_grid = new_eval_grid
-        
-        # Erase
-        for _ in range(e):
-            new_eval_grid = eval_grid.copy()
-            for p in self.all_points:
-                if eval_grid[p] == 0: continue
-                i = 1 if eval_grid[p] > 0 else -1
-                for n in self.neighbors[p]:
-                    if eval_grid[n] * eval_grid[p] <= 0: # if different color
-                        new_eval_grid[p] -= i
-                        if new_eval_grid[p] == 0: break
-            eval_grid = new_eval_grid
-        
-        b_potentials = np.sum(eval_grid > 0)
-        w_potentials = np.sum(eval_grid < 0) + self.komi
+        size_square = int(self.size * self.size)
+        _c_board_eval.restype = POINTER(c_int * size_square)
 
-        return b_potentials, w_potentials
+        eval_grid = self.grid * 64
+        eval_grid_list = eval_grid.ravel().tolist()
+        
+        init_arr = (c_int * size_square) (*eval_grid_list)
+        result_ptr = _c_board_eval(c_int(self.size), c_int(d), init_arr)
+
+        b_eval, w_eval = 0, 0
+        for i in result_ptr.contents:
+            if i > 0: b_eval += 1
+            if i < 0: w_eval += 1
+
+        if output:
+            result_grid = np.frombuffer(result_ptr.contents, dtype=c_int)
+            return b_eval, w_eval, result_grid
+        else:
+            return b_eval, w_eval
+
 # end class Board

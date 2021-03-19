@@ -16,7 +16,6 @@ import pickle
 import numpy as np
 from copy import deepcopy 
 import go
-from board_eval import board_eval
 from time import time
 import random
 from sys import exit, getsizeof
@@ -91,7 +90,8 @@ def main():
                     y = int(round(((event.pos[1]-GRID_SIZE-5) / GRID_SIZE), 0))
                     print(x, y)
                     added_stone = Stone(board, (x, y))
-                    w, b = board.eval()
+                    b, w, eval_grid = board.eval(output=True)
+                    eval_grid.resize((BOARD_SIZE, BOARD_SIZE))
                     outstring = ""
                     for i in range(BOARD_SIZE):
                         for j in range(BOARD_SIZE):

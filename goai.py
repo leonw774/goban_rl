@@ -3,37 +3,30 @@ import argparse
 from time import time, strftime
 import pygame
 import go
-import playmodel
+import playagent
 import cProfile
-from sys import exit
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--epochs", "-e", default=10000, type=int)
-parser.add_argument("--out-intv", "-o", dest="out_intv", default=1000, type=int)
 parser.add_argument("--size", "-s", dest="size", default=19, type=int)
-parser.add_argument("--playout", "-p", dest="playouts", default=800, type=int)
-parser.add_argument("--use-model", "-m", dest="use_model", type=str, default="", action="store")
+parser.add_argument("--playouts", "-p", dest="playouts", default=1600, type=int)
 parser.add_argument("--selfplay", "-S", dest="self_play", action="store_true")
-parser.add_argument("--test", type=str, default="", action="store")
+parser.add_argument("--playas", type=str, dest="playas", default="random", action="store")
 args = parser.parse_args()
-
-EPOCHS = args.epochs
-TRAIN_RECORD_SIZE = 4
-LAERN_THRESHOLD = TRAIN_RECORD_SIZE * 5
-TEST_ONLY = (args.test == "b" or args.test == "w")
-PRINT_INTV = args.out_intv
 
 WHITE = go.WHITE
 BLACK = go.BLACK
 BOARD_SIZE = args.size
+if args.playas == "b":
+    PLAYAS = BLACK
+elif args.playas == "w":
+    PLAYAS = WHITE
+else:
+    PLAYAS = np.random.randint(2)
 
 BACKGROUND = 'images/ramin.jpg'
 COLOR = ((0, 0, 0), (255, 255, 255))
 GRID_SIZE = 20
 DRAW_BOARD_SIZE = (GRID_SIZE * BOARD_SIZE + 20, GRID_SIZE * BOARD_SIZE + 20)
-
-MAX_STEP = 2 * BOARD_SIZE**2
-#ILLEGAL_PUNISHMENT = -4
 
 if BOARD_SIZE <= 9:
     KOMI = 8.5
@@ -107,86 +100,14 @@ class Board(go.Board):
         win, score_diff, outstr = self.score(output=True)
         logfile.write(outstr+"\n")
 
-def train():
-    open("log.txt", "w")
-    record_times = []
-    b_win_count = 0
-    playout = args.playouts // 4
-    playout_increase = 0.5
-    playout_limit = args.playouts
-
-    for epoch in range(EPOCHS):
-        #temperature = 1.0
-        steps = 0
-        pass_count = 0
-        winner = None
-        reward = 0 # reward is viewed from BLACK
-        while (steps <= MAX_STEP):
-            playout = max(playout+playout_increase, playout_limit) # more step, less playout
-            temperature = (1 + 1/BOARD_SIZE) ** -steps # more step, less temperature
-
-            t = time()
-            play_as = board.next
-            pre_grid = board.grid.copy()
-            x, y, mcts_policy = model.decide_monte_carlo(board, playout, temperature)
-            #x, y, instinct = model.decide_instinct(board, temperature)
-            if y == BOARD_SIZE: # pass = size_square -> y = pass//BOARD_SIZE = BOARD_SIZE
-                pass_count += 1
-                board.pass_move()
-            elif y < 0: # resign = -1 -> y = resign//BOARD_SIZE = -1
-                pass_count += 2
-                board.log_endgame(play_as, "resign")
-            else:
-                added_stone = Stone(board, (x, y))
-                if added_stone.islegal:
-                    pass_count = 0
-                else:
-                    continue
-            record_times.append(time()-t)
-
-            if pass_count >= 2 or steps == MAX_STEP:
-                winner, score_diff = board.score()
-                reward = 1 if winner == BLACK else -1 # reward is viewd from BLACK
-                board.log_endgame(winner, "by " + str(score_diff))
-                if winner == BLACK:
-                    b_win_count += 1
-                
-            if winner is not None:
-                model.push_step(pre_grid, mcts_policy)
-                #print("reward:", reward, "steps", steps)
-                break
-            else:
-                model.push_step(pre_grid, mcts_policy)
-            steps += 1
-        # end while game
-        #temperature = max(min_temperature, initial_temperature / (1 + temperature_decay * epoch))
-        model.enqueue_new_record(reward)
-        model.monte_carlo.clear_visit()
-        if epoch > LAERN_THRESHOLD:
-            model.learn(learn_record_size=TRAIN_RECORD_SIZE, verbose=((epoch+1)%PRINT_INTV==0))
-        
-        if (epoch+1) % PRINT_INTV == 0:
-            model.save(str(BOARD_SIZE)+"_tmp.h5")
-            print("epoch: %d\t B win rate: %.3f"%(epoch, b_win_count/(epoch+1)))
-            board.write_game_log(open("log.txt", "a"))
-            print("decide + update time", np.sum(record_times), np.mean(record_times), np.std(record_times))
-        board.clear()
-    # end for epochs
-    print(strftime(str(BOARD_SIZE)+"_%Y%m%d%H%M"))
-    model.save(strftime(str(BOARD_SIZE)+"_%Y%m%d%H%M")+".h5")
-
-def test(ai_play_as):
-    print("begin test")
-    playout = args.playouts
-    playout_increase = 1
-    playout_limit = args.playouts / 2
+def main(ai_play_as):
+    print("begin game")
     pass_count = 0
     steps = 0
     while True:
         pygame.time.wait(250)
         if ai_play_as == board.next:
-            playout = max(playout-playout_increase, playout_limit)
-            x, y, policy = model.decide_monte_carlo(board, playout)
+            x, y, policy = model.decide(board, args.playouts)
             value = policy[x+BOARD_SIZE*y]
             if x >= BOARD_SIZE or y >= BOARD_SIZE:
                 print("model passes\tvalue:%.3f"%(value))
@@ -225,9 +146,6 @@ def test(ai_play_as):
 
 def self_play():
     print("begin self play")
-    playout = args.playouts // 4
-    playout_increase = 1
-    playout_limit = args.playouts
     pass_count = 0
     measure_times = []
     game_over = False
@@ -241,8 +159,8 @@ def self_play():
                     game_over = True
                     continue
                 t=time()
-                cProfile.run("x, y, policy = model.decide_monte_carlo(board, args.playouts)", "mcts_search.profile")
-                #x, y, policy = model.decide_monte_carlo(board, playout)
+                cProfile.run("x, y, policy = model.decide(board, args.playouts)", "mcts_search.profile")
+                #x, y, policy = model.decide_monte_carlo(board, args.playouts)
                 print(time()-t)
                 measure_times.append(time()-t)
                 if y == BOARD_SIZE:
@@ -269,7 +187,6 @@ def self_play():
                         play_as = "B" if board.next == WHITE else "W"
                         intuition = policy[x+BOARD_SIZE*y]
                         print(play_as, "choose (%d, %d)\t intuition:%.3f"%(x, y, intuition))
-                playout = max(playout+playout_increase, playout_limit)
                 
     print("game over")
     winner, score_diff, out_str = board.score(output=True)
@@ -277,16 +194,8 @@ def self_play():
     print("decision time", np.sum(measure_times), np.mean(measure_times), np.std(measure_times))
 
 if __name__ == '__main__':
-    model = playmodel.ActorCritic(BOARD_SIZE, LAERN_THRESHOLD, args.use_model)
-    print("use model:", args.use_model)
-    if TEST_ONLY:
-        pygame.init()
-        pygame.display.set_caption('Go-Ai')
-        screen = pygame.display.set_mode(DRAW_BOARD_SIZE, 0, 32)
-        background = pygame.image.load(BACKGROUND).convert()
-        board = Board(size=BOARD_SIZE, komi=KOMI)
-        test(ai_play_as=(BLACK if args.test=="b" or args.test=="black" else WHITE))
-    elif args.self_play:
+    model = playagent.Agent(BOARD_SIZE)
+    if args.self_play:
         pygame.init()
         pygame.display.set_caption('Go-Ai')
         screen = pygame.display.set_mode(DRAW_BOARD_SIZE, 0, 32)
@@ -294,6 +203,10 @@ if __name__ == '__main__':
         board = Board(size=BOARD_SIZE, komi=KOMI)
         self_play()
     else:
-        board = Board(size=BOARD_SIZE, komi=KOMI, is_drawn=False)
-        train()
-
+        pygame.init()
+        pygame.display.set_caption('Go-Ai')
+        screen = pygame.display.set_mode(DRAW_BOARD_SIZE, 0, 32)
+        background = pygame.image.load(BACKGROUND).convert()
+        board = Board(size=BOARD_SIZE, komi=KOMI)
+        main(ai_play_as=PLAYAS)
+        
