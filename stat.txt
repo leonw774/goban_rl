@@ -1,137 +1,119 @@
-Fri Mar 19 18:10:48 2021    mcts_search.profile
+Wed Mar 24 19:55:28 2021    mcts_search.profile
 
-         2624066 function calls (2491101 primitive calls) in 5.937 seconds
+         295717 function calls (285931 primitive calls) in 1.130 seconds
 
    Ordered by: internal time
 
    ncalls  tottime  percall  cumtime  percall filename:lineno(function)
-    28241    1.013    0.000    1.112    0.000 montecarlo.py:256(uct)
-     6999    0.748    0.000    0.851    0.000 go.py:468(eval)
-     6999    0.361    0.000    1.473    0.000 montecarlo.py:262(backpropagate)
-    70743    0.317    0.000    0.317    0.000 {method 'reduce' of 'numpy.ufunc' objects}
-273642/140677    0.231    0.000    1.717    0.000 {built-in method numpy.core._multiarray_umath.implement_array_function}
-    13844    0.220    0.000    0.961    0.000 go.py:217(add_stone)
-    21245    0.208    0.000    0.447    0.000 {method 'choice' of 'numpy.random.mtrand.RandomState' objects}
-    69782    0.155    0.000    0.155    0.000 {built-in method numpy.array}
-     7000    0.152    0.000    1.224    0.000 montecarlo.py:140(select)
-    63743    0.138    0.000    0.511    0.000 fromnumeric.py:70(_wrapreduction)
-    14000    0.120    0.000    0.120    0.000 {built-in method numpy.fromstring}
-     6999    0.104    0.000    0.104    0.000 montecarlo.py:38(<dictcomp>)
-     6999    0.086    0.000    2.043    0.000 montecarlo.py:221(simulation)
-     6999    0.084    0.000    3.204    0.000 montecarlo.py:173(expand)
-    35091    0.080    0.000    0.220    0.000 fromnumeric.py:39(_wrapit)
-    63481    0.079    0.000    0.079    0.000 {method 'tolist' of 'numpy.ndarray' objects}
-    14000    0.076    0.000    0.266    0.000 go.py:53(__init__)
-    77182    0.071    0.000    0.346    0.000 fromnumeric.py:52(_wrapfunc)
-     6999    0.066    0.000    0.193    0.000 montecarlo.py:22(get_valid_mask)
-    35091    0.061    0.000    0.575    0.000 numeric.py:570(argwhere)
-     7325    0.059    0.000    0.059    0.000 {method 'randint' of 'numpy.random.mtrand.RandomState' objects}
-    28244    0.054    0.000    0.054    0.000 {method 'flatten' of 'numpy.ndarray' objects}
-    13846    0.054    0.000    0.585    0.000 go.py:102(grid_hash)
-     6999    0.049    0.000    0.164    0.000 _methods.py:161(_mean)
-   140769    0.046    0.000    0.046    0.000 {built-in method builtins.getattr}
-    13844    0.045    0.000    0.080    0.000 go.py:138(check_legal)
-    14000    0.044    0.000    0.190    0.000 go.py:88(from_state)
-     6999    0.042    0.000    0.046    0.000 _methods.py:65(_count_reduce_items)
-    42090    0.042    0.000    0.042    0.000 {method 'nonzero' of 'numpy.ndarray' objects}
-     6999    0.042    0.000    0.250    0.000 montecarlo.py:34(__init__)
-    13999    0.041    0.000    0.041    0.000 {built-in method numpy.zeros}
-    13846    0.037    0.000    0.205    0.000 function_base.py:4690(append)
-    63743    0.036    0.000    0.036    0.000 fromnumeric.py:71(<dictcomp>)
-        1    0.034    0.034    5.937    5.937 montecarlo.py:127(playout_loop)
-    13846    0.034    0.000    0.034    0.000 {method 'astype' of 'numpy.ndarray' objects}
-    28241    0.031    0.000    0.031    0.000 {built-in method numpy.frombuffer}
-    42090    0.030    0.000    0.355    0.000 <__array_function__ internals>:2(transpose)
-     6999    0.030    0.000    0.194    0.000 fromnumeric.py:3301(mean)
-    48537    0.030    0.000    0.030    0.000 {method 'ravel' of 'numpy.ndarray' objects}
-    21245    0.028    0.000    0.202    0.000 fromnumeric.py:2912(prod)
-    21245    0.027    0.000    0.167    0.000 fromnumeric.py:2617(amax)
-    35091    0.027    0.000    0.626    0.000 <__array_function__ internals>:2(argwhere)
-    13998    0.024    0.000    0.024    0.000 {method 'copy' of 'list' objects}
-    13998    0.024    0.000    0.024    0.000 {built-in method numpy.empty}
-    35091    0.022    0.000    0.053    0.000 <__array_function__ internals>:2(ndim)
-    35091    0.022    0.000    0.129    0.000 <__array_function__ internals>:2(nonzero)
-    14000    0.021    0.000    0.288    0.000 go.py:49(board_from_state)
-    13844    0.021    0.000    0.982    0.000 go.py:21(__init__)
-    13998    0.021    0.000    0.057    0.000 go.py:85(to_state)
-    42090    0.021    0.000    0.298    0.000 fromnumeric.py:602(transpose)
-    14000    0.020    0.000    0.020    0.000 {method 'resize' of 'numpy.ndarray' objects}
-    21245    0.019    0.000    0.206    0.000 <__array_function__ internals>:2(amax)
-    13846    0.019    0.000    0.066    0.000 fromnumeric.py:1716(ravel)
-    13998    0.018    0.000    0.080    0.000 numeric.py:288(full)
-    13844    0.018    0.000    0.020    0.000 go.py:200(update_capture)
-    35091    0.018    0.000    0.087    0.000 fromnumeric.py:1827(nonzero)
-    20997    0.018    0.000    0.018    0.000 {method 'append' of 'list' objects}
-    21245    0.018    0.000    0.239    0.000 <__array_function__ internals>:2(prod)
-    13844    0.018    0.000    0.018    0.000 go.py:147(<listcomp>)
-     7251    0.018    0.000    0.058    0.000 {method 'any' of 'numpy.generic' objects}
-    42090    0.017    0.000    0.017    0.000 {method 'transpose' of 'numpy.ndarray' objects}
-    13846    0.016    0.000    0.065    0.000 <__array_function__ internals>:2(concatenate)
-    35091    0.016    0.000    0.118    0.000 _asarray.py:23(asarray)
-    34691    0.015    0.000    0.068    0.000 _asarray.py:110(asanyarray)
-    13844    0.014    0.000    0.014    0.000 go.py:108(update_grid)
-    13846    0.014    0.000    0.234    0.000 <__array_function__ internals>:2(append)
-     7003    0.013    0.000    0.073    0.000 fromnumeric.py:2111(sum)
-    13846    0.012    0.000    0.088    0.000 <__array_function__ internals>:2(ravel)
-    13998    0.012    0.000    0.037    0.000 <__array_function__ internals>:2(copyto)
-    63743    0.012    0.000    0.012    0.000 {method 'items' of 'dict' objects}
-    27844    0.011    0.000    0.011    0.000 {method 'tobytes' of 'numpy.ndarray' objects}
-    27998    0.010    0.000    0.010    0.000 {method 'copy' of 'set' objects}
-    27848    0.010    0.000    0.010    0.000 {built-in method builtins.isinstance}
-     6999    0.010    0.000    0.056    0.000 fromnumeric.py:2355(all)
-    35091    0.010    0.000    0.010    0.000 fromnumeric.py:3106(ndim)
-     7251    0.009    0.000    0.103    0.000 fromnumeric.py:2256(any)
-     7251    0.009    0.000    0.135    0.000 <__array_function__ internals>:2(any)
-    13998    0.009    0.000    0.009    0.000 go.py:274(turn)
-    13844    0.008    0.000    0.008    0.000 go.py:118(handle_same_state_illegal)
-     6999    0.008    0.000    0.211    0.000 <__array_function__ internals>:2(mean)
-     6999    0.007    0.000    0.070    0.000 <__array_function__ internals>:2(all)
-    13844    0.006    0.000    0.006    0.000 go.py:28(__init__)
-     7003    0.006    0.000    0.086    0.000 <__array_function__ internals>:2(sum)
-    42090    0.006    0.000    0.006    0.000 fromnumeric.py:598(_transpose_dispatcher)
-    35091    0.006    0.000    0.006    0.000 numeric.py:566(_argwhere_dispatcher)
-    35091    0.005    0.000    0.005    0.000 fromnumeric.py:3102(_ndim_dispatcher)
-    35091    0.005    0.000    0.005    0.000 fromnumeric.py:1823(_nonzero_dispatcher)
-    13844    0.005    0.000    0.005    0.000 go.py:129(handle_suicide_illegal)
-    16293    0.005    0.000    0.005    0.000 {method 'add' of 'set' objects}
-    13844    0.005    0.000    0.005    0.000 {method 'discard' of 'set' objects}
-    21245    0.004    0.000    0.004    0.000 fromnumeric.py:2907(_prod_dispatcher)
-    15149    0.004    0.000    0.004    0.000 {built-in method builtins.all}
-    21245    0.004    0.000    0.004    0.000 fromnumeric.py:2612(_amax_dispatcher)
-     7251    0.004    0.000    0.041    0.000 _methods.py:53(_any)
-    13998    0.004    0.000    0.004    0.000 {built-in method builtins.issubclass}
-     6999    0.004    0.000    0.004    0.000 {built-in method numpy.core._multiarray_umath.normalize_axis_index}
-    13846    0.003    0.000    0.003    0.000 function_base.py:4686(_append_dispatcher)
-     6999    0.003    0.000    0.003    0.000 {built-in method builtins.hasattr}
-     6999    0.003    0.000    0.003    0.000 {method 'union' of 'set' objects}
-    13998    0.002    0.000    0.002    0.000 multiarray.py:1054(copyto)
-    13846    0.002    0.000    0.002    0.000 fromnumeric.py:1712(_ravel_dispatcher)
-     6999    0.002    0.000    0.002    0.000 {built-in method _ctypes.POINTER}
-    13846    0.002    0.000    0.002    0.000 multiarray.py:143(concatenate)
-     7088    0.002    0.000    0.002    0.000 {built-in method builtins.len}
-     6999    0.002    0.000    0.002    0.000 fromnumeric.py:2350(_all_dispatcher)
-     1305    0.002    0.000    0.002    0.000 go.py:205(<listcomp>)
-     7251    0.001    0.000    0.001    0.000 fromnumeric.py:2251(_any_dispatcher)
-     7003    0.001    0.000    0.001    0.000 fromnumeric.py:2106(_sum_dispatcher)
-     6999    0.001    0.000    0.001    0.000 fromnumeric.py:3296(_mean_dispatcher)
-     1890    0.001    0.000    0.001    0.000 {method 'update' of 'set' objects}
-        1    0.000    0.000    0.000    0.000 go.py:316(score)
-      154    0.000    0.000    0.000    0.000 go.py:270(pass_move)
-        1    0.000    0.000    5.937    5.937 {built-in method builtins.exec}
-        1    0.000    0.000    5.937    5.937 montecarlo.py:83(search)
-        1    0.000    0.000    5.937    5.937 playagent.py:45(decide)
-       81    0.000    0.000    0.000    0.000 {method 'pop' of 'set' objects}
-        1    0.000    0.000    0.000    0.000 montecarlo.py:165(handle_terminal)
-        1    0.000    0.000    5.937    5.937 <string>:1(<module>)
+      997    0.401    0.000    0.404    0.000 go.py:557(eval)
+     1000    0.141    0.000    0.322    0.000 montecarlo.py:146(select)
+    79648    0.064    0.000    0.064    0.000 {built-in method builtins.any}
+     8523    0.046    0.000    0.046    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+      998    0.041    0.000    0.041    0.000 montecarlo.py:268(backpropagate)
+      984    0.035    0.000    0.224    0.000 go.py:243(add_stone)
+     3262    0.035    0.000    0.076    0.000 {method 'choice' of 'numpy.random.mtrand.RandomState' objects}
+      982    0.026    0.000    0.026    0.000 go.py:141(update_point_to_group)
+      984    0.020    0.000    0.020    0.000 go.py:118(<listcomp>)
+      647    0.017    0.000    0.046    0.000 go.py:231(<listcomp>)
+      984    0.015    0.000    0.046    0.000 go.py:175(<listcomp>)
+      982    0.014    0.000    0.061    0.000 go.py:226(update_capture)
+18309/8523    0.013    0.000    0.112    0.000 {built-in method numpy.core._multiarray_umath.implement_array_function}
+     3263    0.012    0.000    0.012    0.000 {built-in method numpy.array}
+     4263    0.012    0.000    0.038    0.000 fromnumeric.py:70(_wrapreduction)
+      997    0.012    0.000    0.041    0.000 montecarlo.py:24(get_valid_actions)
+      984    0.011    0.000    0.034    0.000 go.py:113(grid_hash)
+      999    0.011    0.000    0.739    0.001 montecarlo.py:189(expand)
+     7521    0.011    0.000    0.011    0.000 {method 'tolist' of 'numpy.ndarray' objects}
+     1001    0.010    0.000    0.010    0.000 {built-in method numpy.fromstring}
+        1    0.009    0.009    0.016    0.016 montecarlo.py:74(re_root)
+        1    0.008    0.008    1.111    1.111 montecarlo.py:136(playout_loop)
+     3262    0.008    0.000    0.023    0.000 fromnumeric.py:39(_wrapit)
+     4259    0.008    0.000    0.008    0.000 {method 'flatten' of 'numpy.ndarray' objects}
+     3976    0.008    0.000    0.008    0.000 {built-in method numpy.zeros}
+      984    0.007    0.000    0.054    0.000 go.py:166(check_legal)
+        1    0.007    0.007    0.007    0.007 {built-in method gc.collect}
+     3262    0.007    0.000    0.059    0.000 numeric.py:570(argwhere)
+      999    0.007    0.000    0.007    0.000 {method 'copy' of 'set' objects}
+      997    0.006    0.000    0.483    0.000 montecarlo.py:221(add_node)
+     6525    0.006    0.000    0.035    0.000 fromnumeric.py:52(_wrapfunc)
+      997    0.006    0.000    0.017    0.000 montecarlo.py:37(__init__)
+     3262    0.005    0.000    0.035    0.000 fromnumeric.py:2912(prod)
+    13049    0.005    0.000    0.005    0.000 {built-in method builtins.getattr}
+     1194    0.004    0.000    0.004    0.000 {method 'update' of 'set' objects}
+     3262    0.004    0.000    0.004    0.000 {method 'nonzero' of 'numpy.ndarray' objects}
+     1001    0.003    0.000    0.015    0.000 go.py:98(from_state)
+      999    0.003    0.000    0.003    0.000 {method 'copy' of 'list' objects}
+     4263    0.003    0.000    0.003    0.000 fromnumeric.py:71(<dictcomp>)
+      999    0.003    0.000    0.015    0.000 go.py:90(state)
+     3262    0.003    0.000    0.021    0.000 {method 'max' of 'numpy.ndarray' objects}
+     3262    0.003    0.000    0.003    0.000 {built-in method numpy.frombuffer}
+     3262    0.003    0.000    0.064    0.000 <__array_function__ internals>:2(argwhere)
+     3262    0.003    0.000    0.041    0.000 <__array_function__ internals>:2(prod)
+     7521    0.003    0.000    0.003    0.000 {method 'append' of 'list' objects}
+      997    0.003    0.000    0.003    0.000 {built-in method numpy.empty}
+      984    0.002    0.000    0.227    0.000 go.py:23(__init__)
+     3262    0.002    0.000    0.034    0.000 <__array_function__ internals>:2(transpose)
+     3262    0.002    0.000    0.005    0.000 <__array_function__ internals>:2(ndim)
+      999    0.002    0.000    0.002    0.000 {method 'copy' of 'dict' objects}
+     3262    0.002    0.000    0.013    0.000 <__array_function__ internals>:2(nonzero)
+      997    0.002    0.000    0.009    0.000 numeric.py:288(full)
+        3    0.002    0.001    0.002    0.001 {built-in method builtins.print}
+     1001    0.002    0.000    0.018    0.000 go.py:52(board_from_state)
+      986    0.002    0.000    0.002    0.000 go.py:121(update_grid)
+     3262    0.002    0.000    0.009    0.000 fromnumeric.py:1827(nonzero)
+      997    0.002    0.000    0.009    0.000 fromnumeric.py:2355(all)
+      997    0.002    0.000    0.012    0.000 {method 'any' of 'numpy.ndarray' objects}
+     4263    0.002    0.000    0.002    0.000 {method 'items' of 'dict' objects}
+     3262    0.002    0.000    0.014    0.000 _asarray.py:23(asarray)
+     1001    0.002    0.000    0.016    0.000 go.py:59(__init__)
+     3262    0.002    0.000    0.030    0.000 fromnumeric.py:602(transpose)
+     1001    0.002    0.000    0.002    0.000 {method 'resize' of 'numpy.ndarray' objects}
+     3262    0.002    0.000    0.019    0.000 _methods.py:37(_amax)
+     3262    0.001    0.000    0.001    0.000 {method 'get' of 'dict' objects}
+     3262    0.001    0.000    0.001    0.000 {method 'transpose' of 'numpy.ndarray' objects}
+      997    0.001    0.000    0.012    0.000 <__array_function__ internals>:2(all)
+     3262    0.001    0.000    0.001    0.000 fromnumeric.py:3106(ndim)
+      997    0.001    0.000    0.005    0.000 <__array_function__ internals>:2(copyto)
+      984    0.001    0.000    0.001    0.000 {method 'join' of 'str' objects}
+     1981    0.001    0.000    0.001    0.000 {method 'ravel' of 'numpy.ndarray' objects}
+      997    0.001    0.000    0.010    0.000 _methods.py:53(_any)
+     4643    0.001    0.000    0.001    0.000 {method 'add' of 'set' objects}
+     3262    0.001    0.000    0.001    0.000 fromnumeric.py:2907(_prod_dispatcher)
+      984    0.001    0.000    0.001    0.000 {method 'discard' of 'set' objects}
+      982    0.001    0.000    0.001    0.000 go.py:146(handle_same_state_illegal)
+      997    0.001    0.000    0.001    0.000 go.py:300(turn)
+     3262    0.001    0.000    0.001    0.000 numeric.py:566(_argwhere_dispatcher)
+     3262    0.001    0.000    0.001    0.000 fromnumeric.py:3102(_ndim_dispatcher)
+      999    0.001    0.000    0.001    0.000 {method 'tobytes' of 'numpy.ndarray' objects}
+     3262    0.000    0.000    0.000    0.000 fromnumeric.py:1823(_nonzero_dispatcher)
+     3262    0.000    0.000    0.000    0.000 fromnumeric.py:598(_transpose_dispatcher)
+      997    0.000    0.000    0.000    0.000 {method 'union' of 'set' objects}
+     1633    0.000    0.000    0.000    0.000 {built-in method builtins.all}
+      984    0.000    0.000    0.000    0.000 go.py:31(__init__)
+      984    0.000    0.000    0.000    0.000 go.py:157(handle_suicide_illegal)
+      997    0.000    0.000    0.000    0.000 fromnumeric.py:2350(_all_dispatcher)
+        1    0.000    0.000    1.130    1.130 {built-in method builtins.exec}
+      997    0.000    0.000    0.000    0.000 multiarray.py:1054(copyto)
+        1    0.000    0.000    0.000    0.000 go.py:344(score)
+        1    0.000    0.000    1.130    1.130 montecarlo.py:83(search)
+        2    0.000    0.000    0.000    0.000 go.py:183(<listcomp>)
+        1    0.000    0.000    1.130    1.130 playagent.py:45(decide)
+       15    0.000    0.000    0.000    0.000 go.py:296(pass_move)
+        4    0.000    0.000    0.000    0.000 fromnumeric.py:2111(sum)
+       91    0.000    0.000    0.000    0.000 {built-in method builtins.len}
+        1    0.000    0.000    1.130    1.130 <string>:1(<module>)
+       79    0.000    0.000    0.000    0.000 {method 'pop' of 'set' objects}
+        4    0.000    0.000    0.000    0.000 <__array_function__ internals>:2(sum)
+        1    0.000    0.000    0.000    0.000 montecarlo.py:181(handle_terminal)
         1    0.000    0.000    0.000    0.000 {method 'argmax' of 'numpy.ndarray' objects}
-        1    0.000    0.000    0.000    0.000 montecarlo.py:75(re_root)
+        4    0.000    0.000    0.000    0.000 {built-in method builtins.isinstance}
         1    0.000    0.000    0.000    0.000 <__array_function__ internals>:2(argmax)
-        1    0.000    0.000    0.000    0.000 {method 'sum' of 'numpy.ndarray' objects}
         1    0.000    0.000    0.000    0.000 fromnumeric.py:1119(argmax)
-        1    0.000    0.000    0.000    0.000 {method 'get' of 'dict' objects}
+        1    0.000    0.000    0.000    0.000 {method 'sum' of 'numpy.ndarray' objects}
+        4    0.000    0.000    0.000    0.000 fromnumeric.py:2106(_sum_dispatcher)
         1    0.000    0.000    0.000    0.000 _methods.py:45(_sum)
-        2    0.000    0.000    0.000    0.000 {method 'keys' of 'dict' objects}
-        1    0.000    0.000    0.000    0.000 fromnumeric.py:1115(_argmax_dispatcher)
+        2    0.000    0.000    0.000    0.000 {method 'remove' of 'set' objects}
         1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+        1    0.000    0.000    0.000    0.000 fromnumeric.py:1115(_argmax_dispatcher)
 
 

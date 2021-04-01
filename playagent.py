@@ -27,10 +27,10 @@ class Agent():
         self.size_square = size**2
         self.action_size = size**2 + 1
 
-        self.resign_value = -0.5 # resign if determined value is low than this value
+        self.resign_value = 0.1 # resign if determined value is low than this value
 
         # batch_size too large will cause exploration too high
-        self.monte_carlo = MonteCarlo(self, simulation_num=1, simulation_depth=1)
+        self.monte_carlo = MonteCarlo(self, simulation_num=1, simulation_depth=0)
 
     def get_valid_mask(self, board):
         valid_mask = np.zeros((self.action_size), dtype=bool)
@@ -42,8 +42,8 @@ class Agent():
             valid_mask[self.action_size-1] = True # can pass
         return valid_mask
 
-    def decide(self, board, playout, temperature=0.01):
+    def decide(self, board, playout):
         prev_point = board.log[-1][1] if len(board.log) else (-1, 0)
         prev_action = prev_point[0] + prev_point[1] * self.size
-        x, y, pi = self.monte_carlo.search(board, prev_action, int(playout), temperature)
+        x, y, pi = self.monte_carlo.search(board, prev_action, int(playout))
         return x, y, pi

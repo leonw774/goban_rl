@@ -21,7 +21,7 @@ import random
 from sys import exit, getsizeof
 
 BACKGROUND = 'images/ramin.jpg'
-BOARD_SIZE = 19
+BOARD_SIZE = 9
 KOMI = 6.5
 GRID_SIZE = 25
 DRAW_BOARD_SIZE = (GRID_SIZE * BOARD_SIZE + GRID_SIZE, GRID_SIZE * BOARD_SIZE + GRID_SIZE)
@@ -90,19 +90,8 @@ def main():
                     y = int(round(((event.pos[1]-GRID_SIZE-5) / GRID_SIZE), 0))
                     print(x, y)
                     added_stone = Stone(board, (x, y))
-                    b, w, eval_grid = board.eval(output=True)
-                    eval_grid.resize((BOARD_SIZE, BOARD_SIZE))
-                    outstring = ""
-                    for i in range(BOARD_SIZE):
-                        for j in range(BOARD_SIZE):
-                            if eval_grid[j, i] > 0:
-                                outstring += "X "
-                            elif eval_grid[j, i] < 0:
-                                outstring += "O "
-                            else:
-                                outstring += "  "
-                        outstring += "\n"
-                    print(outstring)
+                    board.debugPrint()
+                    print(board.eval())
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_p:
                     winner, score_diff, out_str = board.score(output=True)

@@ -8,7 +8,7 @@ import cProfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--size", "-s", dest="size", default=19, type=int)
-parser.add_argument("--playouts", "-p", dest="playouts", default=1600, type=int)
+parser.add_argument("--playouts", "-p", dest="playouts", default=1000, type=int)
 parser.add_argument("--selfplay", "-S", dest="self_play", action="store_true")
 parser.add_argument("--playas", type=str, dest="playas", default="random", action="store")
 args = parser.parse_args()
