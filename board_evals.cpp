@@ -14,7 +14,7 @@
 extern "C" {
     // int* territoryEval(int size, int d, int* init_grid);
     // int* getUncondLife(int size, int* init_grid);
-    double boardEval (int size, int* init_grid, double komi, int d, double c1, double c2, double c3);
+    double boardEval (int size, int* init_grid, int d);
 };
 
 /* TERRITORY ESTIMATION */
@@ -189,7 +189,6 @@ int* territoryEval(int size, int d, int* init_grid) {
     }
     return b.grid;
 }
-
 
 /* UNCONDITIONAL LIFE ALGORITHM */
 /*
@@ -606,94 +605,19 @@ int* getUncondLife(int size, int* init_grid) {
     return uncond_live_grid;
 }
 
-/* LIBERTY RACE */
-/*
-    this calculates the liberty race situation of each locals
-    a local is a set of groups that neighboring each other
-
-    for each locals:
-        calculate liberty of each groups
-        find critical groups from both colors:
-            if a group's liberty count is less than all neighboring opponent group's liberty count
-            then that group is a critical group
-        
-        if all have no critical group: tie
-        elif one have critical group: the one that have lose
-        else:
-            both color find the critical groups of minimum liberties
-            the one with more liberties win
-            if tie:
-                the one with more minimum liberties groups win
-                if still tie: then its tie
-        the color that wins can get points of the amount of enemy stones in the local
-    return final score of black & white in array: {Black score, White score}
-*/
-/* 
-int* getLibertyRaceScore(Board& builtBoard) {
-
-}
-*/
-
-/* POLICY FUNCTION */
-/*
-    the smaller abs value of estimated territory, the higher policy value on that point
-    the policy value around low liberty groups are also higher
-    in every point i:
-        terr_score[i] = (64 - terr_grid[i]) * (4 + terr_grid[i]) / 1156
-        libt_score[i] = exp(-min(libt of nb groups) + 1)
-            --when min of nb group's liberty is one, libt_score = exp(0) = 1
-    policy = terr_score * ct + libt_score * cl
-    pass (id: size*size) is mean of non-zero policy
-*/
-double* calcPolicy (Board b, int* terr_grid, double ct, double cl) {
-    double* result_grid = new double[b.sizeSquare+1];
-    memset(result_grid, 0.0, sizeof(double) * b.sizeSquare+1);
-    
-    double sumnonzero = 0.0;
-    int countnonzero = 0;
-    for (int i = 0; i < b.sizeSquare; ++i) {
-        if (b.grid[i] != 0) continue;
-        int minNBLib = 10000;
-        for (int r = 0; r < 4; ++r) {
-            int nb = b.get_neighbor(r, i);
-            if (nb == -1) continue;
-            if (b.point2GroupId[nb] == -1) continue;
-            size_t libsize = b.gidLib[b.point2GroupId[nb]].size();
-            if (libsize < minNBLib) minNBLib = libsize;
-        }
-        double terrScore = (64 - terr_grid[i]) * (4 + terr_grid[i]) / 1156.0;
-        if (terrScore < 0) terrScore = 0;
-        result_grid[i] = ct * terrScore + 
-                         cl * ((minNBLib < 9999) ? exp(1 - minNBLib) : 0);
-        if (result_grid[i] > 0) {
-            sumnonzero += result_grid[i];
-            countnonzero++;
-        }
-        // std::cout << terrScore << ", " << minNBLib << ", " << result_grid[i] << std::endl;
-    }
-    result_grid[b.sizeSquare] = sumnonzero / countnonzero;
-    return result_grid;
-}
-
 /* THE ONE FUNCTION TO DO IT ALL */
 /*
     PARAMETERS:
-    d is the parameter for territory estimation
     init_grid is original board grid with black = 1, empty = 0, white = -1
-    c1, c2, c3: parameters for
-        c1: estimated territory + 
-        c2: liberty race situation + 
-        c3: territory based on only unconditionally alive groups
+    d is the parameter for territory estimation
+
+    the final territory count is based on
+    (estimated territory) OR (territory based on only unconditionally alive groups)
 
     RETURN:
-    array of float with length (size * size + 2)
-    index 0 ~ size*size is policy grid
-        policy:
-            see that comment at calcPolicy()
-    index size*size+1 is evaluation value
-        evaluation value = black score - white score
+    float: evaluation value = black score - white score
 */
-double boardEval (int size, int* init_grid, int d, double c1, double c2, double c3) {
+double boardEval (int size, int* init_grid, int d) {
     int* terr_init_grid = new int[size * size];
     for (int i = 0; i < size * size; ++i) {
         terr_init_grid[i] = init_grid[i] * 64;
@@ -708,15 +632,23 @@ double boardEval (int size, int* init_grid, int d, double c1, double c2, double 
     // calc final eval score
     double bscore = 0, wscore = 0; //komi * 0.5;
     for (int i = 0; i < size * size; ++i) {
-        if (terr_result_grid[i] > 0) bscore += c1;
-        else if (terr_result_grid[i] < 0) wscore += c1;
+        if (uncond_life_result_grid[i] > 0) {
+            bscore += 1;
+        }
+        else if (uncond_life_result_grid[i] < 0) {
+            wscore += 1;
+        }
     }
     for (int i = 0; i < size * size; ++i) {
-        if (uncond_life_result_grid[i] > 0) bscore += c2;
-        else if (uncond_life_result_grid[i] < 0) wscore += c2;
+        if (uncond_life_result_grid[i] == 0) {
+            if (terr_result_grid[i] > 0) {
+                bscore += 1;
+            } 
+            else if (terr_result_grid[i] < 0) {
+                wscore += 1;
+            }
+        }
     }
-    bscore += avgLiberty[0] * c3;
-    wscore += avgLiberty[1] * c3;
     // std::cout << "B";
     // double* finalarray = new double[size*size+2];
     // memcpy(finalarray, policy_grid, sizeof(double) * (size*size+1));

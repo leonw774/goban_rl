@@ -1,36 +1,12 @@
 import gc
 from go import Stone, board_from_state, WHITE, BLACK
-from time import time, sleep
+# from time import time
 import numpy as np
 from ctypes import c_double, c_uint, c_int, POINTER, CDLL
 
 np.seterr(all='raise')
 _c_uct = CDLL("uct.dll").uct
-invalidQ = -9
-
-def masked_softmax(valid_mask, x):
-    # astype("float64") because numpy's multinomial convert array to float64 after pval.sum()
-    # sometime the sum exceed 1.0 due to numerical rounding
-    x = x.astype("float64")
-    # do not consider i if mask[i] == True
-    masked_x = x[valid_mask]
-    # stablize/normalize because if x too big will cause NAN when exp(x)
-    normal_masked_x = masked_x - np.max(masked_x, axis=-1)
-    masked_softmax_x = np.exp(normal_masked_x) / np.sum(np.exp(normal_masked_x), axis=-1)
-    softmax = np.zeros(x.shape)
-    softmax[valid_mask] = masked_softmax_x
-    return softmax
-
-def get_valid_actions(board):
-    action_size = board.size ** 2 + 1
-    invalid_mask = np.zeros(action_size, dtype=bool)
-    # transpose so that [x, y] become [x+y*size]
-    invalid_mask[:-1] = board.grid.any(axis=2).T.flatten()
-    for p in board.suicide_illegal.union(board.same_state_illegal):
-        invalid_mask[p[0]+p[1]*board.size] = True
-    if not np.all(invalid_mask): # not empty
-        invalid_mask[action_size-1] = False # can pass
-    return np.logical_not(invalid_mask)
+invalidQ = -8
 
 class MonteCarloNode():
     __slots__ = ("state", "value", "valid_actions", "children", "Q", "N")
@@ -55,9 +31,11 @@ class MonteCarloNode():
 class MonteCarlo():
     def __init__ (self, model, simulation_num=1, simulation_depth=8):
         self.model = model
+
         self.size = model.size
         self.size_square = self.size**2
         self.action_size = self.size_square + 1
+
         self.root = None
         self.playout_limit = 0 # reset every time search method
         self.cput = 1.4
@@ -127,11 +105,11 @@ class MonteCarlo():
 
         # choose resign if value too low OR value is action value is much lower than root
         if self.root.Q[action] < self.model.resign_value:
-            return 0, -1, mcts_policy
+            return 0, -1
         
         self.re_root(action)
         # print(self.root.Q, self.root.N)
-        return action%self.size, action//self.size, mcts_policy
+        return action % self.size, action // self.size
 
     def playout_loop(self):
         for i in range(self.playout_limit):
@@ -157,9 +135,7 @@ class MonteCarlo():
             N_c_arr = (c_int * self.action_size) (* curnode.N.tolist())
             result_ptr = _c_uct(Q_c_arr, N_c_arr, c_double(self.cput), c_uint(self.action_size))
             U = np.frombuffer(result_ptr.contents)
-            # print("Q", curnode.Q)
-            # print("N", curnode.N)
-            # print("U", U)
+            # print("Q", curnode.Q, "\nN", curnode.N, "\nU", U)
             max_a = np.argwhere(U == U.max()).flatten()
             best_a = np.random.choice(max_a)
             action_path.append(best_a)
@@ -201,33 +177,41 @@ class MonteCarlo():
         
         # add node
         if islegal:
-            new_node = self.add_node(node, action, board)
-            value = new_node.value
-            if node_playas == WHITE: value = -value
-            sigmoid_diff = 1 / (1 + np.exp(-value))
-            # sigmoid_diff = np.tanh(value)
-            return sigmoid_diff
-        else:
-            # delete this child from valid list and reset its info
-            node.valid_actions[action] = False
-            node.Q[action] = invalidQ
-            node.N[action] = 0
-            # re-dump board state for its illegal record,
-            # it can reduce some illegal children in endgame point expand
-            node.state = board.state
-            #print(leaf_action, "is illegal")
+            # check eval
+            # if BLACK did a move, eval should be better. if WHITE did a move, eval should be worse
+            eval = board.eval()
+            if (board.next == WHITE and eval > node.eval) or (board.next == BLACK and eval < node.eval):
+                new_node = self.add_node(node, action, board, eval)
+                value = new_node.value
+                if node_playas == WHITE: 
+                    if self.model.CRITIC_OUTLAYER_ACTIVATION_FUNC == "tanh":
+                        value = -value
+                    else:
+                        value = 1 - value
+                return value
+        
+        # delete this child from valid list and reset its info
+        node.valid_actions[action] = False
+        node.Q[action] = invalidQ
+        node.N[action] = 0
+        # re-dump board state for its illegal record,
+        # it can reduce some illegal children in endgame point expand
+        node.state = board.state
+        #print(leaf_action, "is illegal")
         return None
 
-    def add_node(self, parent, action, board):
-        value = board.eval()
-        valid_actions = get_valid_actions(board)
+    def add_node(self, parent, action, board, eval):
+        value = self.model.get_value(board.grid, board.next)
+        valid_actions = board.get_valid_move_mask()
         newnode = MonteCarloNode(state=board.state,
+                        eval = eval,
                         value = value,
                         valid_actions = valid_actions,
                         action_size = self.action_size)
         # parent add child
         if parent: parent.children[action] = newnode
         return newnode
+    
     """ 
     def simulation(self, board):
         # random moves, can pass
@@ -270,5 +254,7 @@ class MonteCarlo():
             node.Q[action] = (value + node.N[action] * node.Q[action]) / (node.N[action] + 1)
             node.N[action] += 1
             # switch side
-            # value = -value # tanh 
-            value = 1 - value # sigmoid
+            if self.model.CRITIC_OUTLAYER_ACTIVATION_FUNC == "tanh":
+                value = -value # tanh
+            else:
+                value = 1 - value # sigmoid
