@@ -125,7 +125,7 @@ class Board(object):
     def from_state(self, state):
         self.size = state[0]
         self.komi = state[1]
-        self.grid = np.fromstring(state[2])
+        self.grid = np.fromstring(state[2], dtype = int)
         self.grid.resize((self.size, self.size, 2))
         self.groups = state[3]
         self.point_to_group = state[4]
@@ -133,6 +133,9 @@ class Board(object):
         self.neighbors = state[6]
         self.all_points = state[7]
         self.log = state[8]
+
+        self.same_position_illegal = set()
+        self.suicide_illegal = set()
 
     def bound(self, p):
         return 0 <= p[0] < self.size and 0 <= p[1] < self.size 
@@ -345,6 +348,10 @@ class Board(object):
     def log_endgame(self, winner, reason):
         self.log.append((winner, reason, -1))
     
+    """
+        log is a list of 3 element tuple:
+            (color, point(2-element tuple) | "pass", grid-hash)
+    """
     def write_log_file(self, file):
         for line in self.log:
             file.write(("B" if line[0] == BLACK else "W") + " " + str(line[1]) + "\n")
@@ -432,15 +439,15 @@ class Board(object):
             all_points = all_points - searched
         # end double for: every empty points
         
-        # Japanese rule
-        # score = living friendly stones + territory + captured + komi if white
+        # Japanese territory rule (not really)
+        # score = territory + dead enemy stones + captured enemy + komi if white
         # w_score = len(w_territory) + len(b_dead_stones) + self.b_captured + self.komi
         # b_score = len(b_territory) + len(w_dead_stones) + self.w_captured
 
-        # Chinese rule (not really)
-        # score = stones on board + territory + komi if white
+        # Chinese territory rule (not really)
+        # score = stones on board + territory + komi if white + 0.5 to black if end at white
         w_score = np.sum(self.grid[:,:,WHITE]) + len(w_territory) + self.komi    
-        b_score = np.sum(self.grid[:,:,BLACK]) + len(b_territory)
+        b_score = np.sum(self.grid[:,:,BLACK]) + len(b_territory) + (0.5 if self.log[-1][0] == WHITE else 0.0)
         score_diff = b_score - w_score
         if b_score > w_score:
             winner = BLACK
@@ -486,7 +493,7 @@ class Board(object):
         This fuinction do mid-game score evaluation to help reduce bad moves in monte-carlo
     """
     def eval(self):
-        d = 5 # dilation parameter
+        d = 4 # dilation parameter
         size_square = int(self.size * self.size)
         c_board_eval.restype = c_double
 

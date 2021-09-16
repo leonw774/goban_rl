@@ -6,7 +6,8 @@ import pickle
 import cProfile
 from sys import getsizeof
 
-stats = pstats.Stats('mcts_search.profile', stream=open('stat.txt', 'w'))
+# stats = pstats.Stats('mcts_search.profile', stream=open('stat.txt', 'w'))
+stats = pstats.Stats('train.profile', stream=open('stat.txt', 'w'))
 stats.strip_dirs().sort_stats('time').print_stats()
 
 board = go.Board(19, 6.5)

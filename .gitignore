@@ -126,4 +126,4 @@ dmypy.json
 
 # Other
 *.h5
-log.txt
+*.txt

@@ -8,7 +8,7 @@ import cProfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--size", "-s", dest="size", default=19, type=int)
-parser.add_argument("--playouts", "-p", dest="playouts", default=1000, type=int)
+parser.add_argument("--playouts", "-p", dest="playouts", default=1024, type=int)
 parser.add_argument("--selfplay", "-S", dest="self_play", action="store_true")
 parser.add_argument("--use-model", "-m", dest="use_model", type=str, default="", action="store")
 parser.add_argument("--playas", type=str, dest="playas", default="random", action="store")
@@ -29,23 +29,12 @@ else:
 
 BACKGROUND = 'images/ramin.jpg'
 GRID_SIZE = 20
-DRAW_BOARD_SIZE = (GRID_SIZE * BOARD_SIZE + 20, GRID_SIZE * BOARD_SIZE + 20)
-
-if BOARD_SIZE <= 9:
-    KOMI = 9.5
-elif BOARD_SIZE <= 13:
-    KOMI = 8.5
-else:
-    KOMI = 7.5
-
-print("Board size:", BOARD_SIZE)
-print("Komi:", KOMI)
 
 class Stone(go.Stone):
     def __init__(self, board, point):
         """Create, initialize and draw a stone."""
         super(Stone, self).__init__(board, point)
-        if board.is_drawn and self.islegal:
+        if self.islegal:
             board.draw_stones()
 
 class Board(go.Board):
@@ -161,19 +150,20 @@ def self_play():
                     continue
                 t = time()
                 # cProfile.run("x, y = model.decide(board, args.playouts)", "mcts_search.profile")
-                x, y = model.decide_monte_carlo(board, args.playouts)
-                print(time()-t)
+                x, y = model.decide_monte_carlo(board, args.playouts, output = True)
+                policy, value = model.get_policy_value(board.grid, board.next)
+                print("time", time()-t)
                 measure_times.append(time()-t)
                 if y == BOARD_SIZE:
                     board.pass_move()
                     play_as = "B" if board.next == WHITE else "W"
-                    print(play_as, "pass")
+                    print(play_as, "pass (p,v) =", policy, value)
                     pass_count += 1
                     if pass_count >= 2: break
                 elif y < 0:
                     board.pass_move()
                     play_as = "B" if board.next == WHITE else "W"
-                    print(play_as, "resigned")
+                    print(play_as, "resigned (p,v) =", policy, value)
                     game_over = True
                 else:
                     added_stone = Stone(board, (x, y))
@@ -184,7 +174,7 @@ def self_play():
                     else:
                         pass_count = 0
                         play_as = "B" if board.next == WHITE else "W"
-                        print(play_as, "choose (%d, %d)\t intuition:%.3f"%(x, y))
+                        print(play_as, "choose (%d, %d)"%(x, y), "(p,v) =", policy, value)
                 
     print("game over")
     winner, score_diff, out_str = board.score(output=True)
@@ -192,7 +182,20 @@ def self_play():
     print("decision time", np.sum(measure_times), np.mean(measure_times), np.std(measure_times))
 
 if __name__ == '__main__':
-    model = playmodel.ActorCritic(BOARD_SIZE, 0, args.use_model)
+
+    model = playmodel.ActorCritic(args.size, args.use_model)
+    BOARD_SIZE = model.board_size
+    DRAW_BOARD_SIZE = (GRID_SIZE * BOARD_SIZE + 20, GRID_SIZE * BOARD_SIZE + 20)
+    if BOARD_SIZE <= 9:
+        KOMI = 5.5
+    elif BOARD_SIZE <= 13:
+        KOMI = 6.5
+    else:
+        KOMI = 7.5
+        
+    print("Board size:", BOARD_SIZE)
+    print("Komi:", KOMI)
+
     if args.self_play:
         pygame.init()
         pygame.display.set_caption('Go-Ai')

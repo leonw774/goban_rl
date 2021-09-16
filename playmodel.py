@@ -9,8 +9,7 @@ from tensorflow.keras import optimizers
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Activation, BatchNormalization, Concatenate, Conv2D, Dense, Dropout, Flatten, Input
 # if there is some weird bug, try this:
-# import tensorflow as tf
-# tf.compat.v1.disable_eager_execution()
+#tf.compat.v1.disable_eager_execution()
 
 WHITE = go.WHITE
 BLACK = go.BLACK
@@ -56,27 +55,25 @@ def masked_softmax(mask, x, temperature):
     # do not consider i if mask[i] == True
     masked_x = x[mask]
     # stablize/normalize because if x too big will cause NAN when exp(x)
-    normal_masked_x = masked_x - max(masked_x)
-    masked_softmax_x = np.exp(normal_masked_x/temperature) / np.sum(np.exp(normal_masked_x/temperature))
+    # masked_x = masked_x - max(masked_x)
+    exp_masked_x = np.exp(masked_x / temperature)
+    masked_softmax_x = exp_masked_x / np.sum(exp_masked_x)
     softmax = np.zeros(x.shape)
     softmax[mask] = masked_softmax_x
     return softmax
-
-def switch_side(grid):
-    switched_grid = grid.copy()
-    switched_grid[:,:,[0,1]] = switched_grid[:,:,[1,0]]
-    return switched_grid
 
 class ActorCritic():
     def __init__ (self, size, load_model_file = None) :
         self.actor = None
         self.critic = None
-        self.size = size
-        self.size_square = size ** 2
-        self.action_size = size ** 2 + 1
+        self.combined = None
 
-        self.SHARE_HIDDEN_LAYER_NUM = 1
-        self.SHARE_HIDDEN_LAYER_CHANNEL = 32
+        self.target_actor = None
+        self.target_critic = None
+        self.target_combined = None
+
+        self.SHARE_HIDDEN_LAYER_NUM = 2
+        self.SHARE_HIDDEN_LAYER_CHANNEL = 64
 
         self.CRITIC_OUTLAYER_ACTIVATION_FUNC = "tanh"
         if self.CRITIC_OUTLAYER_ACTIVATION_FUNC == "tanh":
@@ -86,19 +83,25 @@ class ActorCritic():
             self.WIN_REWARD = 1
             self.LOSE_REWARD = 0
 
-        self.GAMMA = 0.5
-        self.LEARNING_RATE = 1e-3
+        self.GAMMA = 0.9
+        self.LEARNING_RATE = 1e-5
 
         self.step_records = [StepRecord()]
         self.STEP_RECORD_AMOUNT_MAX = 4
         self.LEARN_RECORD_SIZE = 2
 
-        self.resign_value = -0.8 # resign if determined value is low than this value
+        self.RESIGN_THRESHOLD = (self.WIN_REWARD - self.LOSE_REWARD) * 0.05 + self.LOSE_REWARD # resign if determined value is low than this value
 
         if load_model_file:
-            self.actor = load_model("actor_" + load_model_file)
-            self.critic = load_model("critic_" + load_model_file)
+            self.actor = load_model("actor_" + load_model_file + ".h5")
+            self.critic = load_model("critic_" + load_model_file + ".h5")
+            self.board_size = self.actor.layers[0].output_shape[0][1]
+            self.board_size_square = self.board_size ** 2
+            self.action_size = self.board_size ** 2 + 1
         else :
+            self.board_size = size
+            self.board_size_square = size ** 2
+            self.action_size = size ** 2 + 1
             self.init_models()
         # initalize predict function ahead of possible threading in monte carlo
         # to prevent multi initializtion
@@ -113,7 +116,7 @@ class ActorCritic():
         # self.monte_carlo = ParallelMonteCarlo(self, batch_size = 4, thread_max = 4)
 
     def init_models(self):
-        input_grid = Input((self.size, self.size, 2))
+        input_grid = Input((self.board_size, self.board_size, 2))
         input_playas = Input((1,))
         conv = input_grid
         for _ in range(self.SHARE_HIDDEN_LAYER_NUM):
@@ -136,8 +139,8 @@ class ActorCritic():
         c = BatchNormalization()(c)
         c = Activation("relu")(c)
         c = Flatten()(c)
-        a = Concatenate()([a, input_playas])
-        c = Dense(256, activation = "relu")(c)
+        c = Concatenate()([c, input_playas])
+        c = Dense(256)(c)
 
         if self.CRITIC_OUTLAYER_ACTIVATION_FUNC == "sigmoid":
             value = Dense(1, activation = "sigmoid")(c)
@@ -156,45 +159,45 @@ class ActorCritic():
         # loss of score_value should be MSE
         self.critic = Model([input_grid, input_playas], value)
 
-
         self.combined = Model([input_grid, input_playas], [policy, value]) # this is for training use
         self.combined.summary()
 
         self.optimizer = optimizers.RMSprop(lr = self.LEARNING_RATE)
-        self.actor.compile(optimizer = self.optimizer)
-        self.critic.compile(optimizer = self.optimizer)
+        # self.actor.compile(optimizer = self.optimizer)
+        # self.critic.compile(optimizer = self.optimizer)
 
     # predict_on_batch seem to be faster than predict if only one batch is feeded
-    def get_value(self, boardgrid, playas):
-        return self.critic.predict_on_batch([boardgrid[np.newaxis], np.array([playas]) ])[0,0]
-
-    def get_policy(self, boardgrid, playas):
-        return self.actor.predict_on_batch([boardgrid[np.newaxis], np.array([playas]) ])[0]
+    def get_policy_value(self, boardgrid, playas):
+        return self.actor.predict_on_batch([boardgrid[np.newaxis], np.array([playas])])[0], self.critic.predict_on_batch([boardgrid[np.newaxis], np.array([playas])])[0,0]
 
     def get_masked_policy(self, board, temperature):
         invalid_mask = board.get_valid_move_mask()
-        policy = self.get_policy(board.grid, board.next)
+        policy = self.actor.predict_on_batch([board.grid[np.newaxis], np.array([board.next])])[0]
         if board.next == WHITE:
             policy = -policy
+
         # Dirichlet's alpha = 10 / (averge legal move of every state of game)
         # in 19*19 it is 250 so alpha = 0.03
         # in 9*9 it maybe 60 so alpha = 0.1
-        alpha = 10 / self.size_square
-        noise = np.random.dirichlet(alpha = [alpha] * self.action_size)
-        noised_policy = 0.75 * policy + 0.25 * noise
-        masked_policy = masked_softmax(invalid_mask, noised_policy, temperature)
+        # alpha = 10 / self.board_size_square
+        # noise = np.random.dirichlet(alpha = [alpha] * self.action_size)
+        # noised_policy = 0.75 * policy + 0.25 * noise
+        # masked_policy = masked_softmax(invalid_mask, noised_policy, temperature)
+
+        masked_policy = masked_softmax(invalid_mask, policy, temperature)
+
         #print(all(np.logical_or(np.logical_not(invalid_mask), (instinct < 1e-4)))) # if output False, something is wrong
         return masked_policy
 
     def decide(self, board, temperature):
         masked_policy = self.get_masked_policy(board, temperature)
         act = np.random.choice(self.action_size, 1, p = masked_policy)[0]
-        return act % self.size, act // self.size
+        return act % self.board_size, act // self.board_size
 
-    def decide_monte_carlo(self, board, playout, temperature = 0.1):
+    def decide_monte_carlo(self, board, playout, output = False):
         prev_point = board.log[-1][1] if len(board.log) else (-1, 0)
-        prev_action = prev_point[0] + prev_point[1] * self.size
-        x, y = self.monte_carlo.search(board, prev_action, int(playout), temperature)
+        prev_action = prev_point[0] + prev_point[1] * self.board_size
+        x, y = self.monte_carlo.search(board, prev_action, int(playout), output)
         return x, y
 
     def pop_step(self):
@@ -214,52 +217,69 @@ class ActorCritic():
     #     return (x - x.mean()) / (np.std(x) + 1e-9)
 
     def learn(self, verbose=True):
-        if len(self.step_records) < self.LEARN_RECORD_SIZE: return
+        
+        if len(self.step_records) < self.LEARN_RECORD_SIZE * 2:
+             return
+
         random_id = np.random.randint(len(self.step_records), size = self.LEARN_RECORD_SIZE)
+        critic_loss = 0
+        actor_loss = 0
+        learn_epoch = 0
+
         for id in random_id:
             rec_ps, rec_a, rec_cs, rec_r = self.step_records[id].get_arrays()
             rec_len = self.step_records[id].length
-            if rec_len < 2: continue
-
-            play_as_array = np.zeros((rec_len, 1))
-            play_as_array[1::2] = WHITE
-            play_as_array[1::2] = BLACK
+            if rec_len <= 1: continue # impossible?!
+            learn_epoch += 1
+            
+            prev_playas = np.zeros((rec_len, 1))
+            cur_playas = np.zeros((rec_len, 1))
+            prev_playas[0::2] = BLACK
+            prev_playas[1::2] = WHITE
+            cur_playas[0::2] = WHITE
+            cur_playas[1::2] = BLACK
 
             """
-                Critic Loss = 1/2 * (Adventage)^2 
-                            = 1/2 * (reward(s') + value(s') * GAMMA - value(s)) ^ 2
+                Adventage Actor Critic
 
-                Actor Loss = -Adventage * log(logits[a])
+                Adventage = Expected_Reward(s, a) - Value(s)
+                Expected_Reward ~= Reward(s) + Value(s') * GAMMA
+                Adventage = Reward(s) + Value(s') * GAMMA - Value(s)
 
-                Combined loss = Critic Loss + Actor Loss - Actor Entropy
+                (Expected_Reward似乎可以用Discounted_Reward代替)
+
+                Critic Loss = 1/2 * Adventage ^ 2 (Huber Loss)
+
+                Actor Loss = -Adventage * log(Policy(a|s))
+
+                Combined loss = Critic Loss + Actor Loss - Actor Entropy * ALPHA (expect to maximize the entrpoy of actor) (ALPHA is small)
             """
+            ps_value = self.critic.predict([rec_ps, prev_playas])[0]
             with tf.GradientTape() as tape:
 
-                cs_policy, cs_value = self.combined([rec_cs, play_as_array])
+                cs_policy, cs_value = self.combined([rec_cs, cur_playas])
 
                 # critic loss
-                discounted_reward_sum = np.zeros((rec_len, 1))
-                discounted_reward_sum[-1] = rec_r
-                for i in range(1, rec_len):
-                    discounted_reward_sum[-1-i] = discounted_reward_sum[-i] * self.GAMMA
-                cs_value = self.critic([rec_cs, play_as_array])
-                adventage = tf.convert_to_tensor(discounted_reward_sum, dtype = np.float32) - cs_value # convert as float32 because keras uses float32
-                critic_loss = tf.reduce_mean(0.5 * (adventage ** 2)) # Huber loss
+                reward_array = np.zeros((rec_len, 1))
+                reward_array[-1] = rec_r
+                expect_reward = tf.where(reward_array != 0, reward_array, cs_value * self.GAMMA)
+                adventage = expect_reward - tf.convert_to_tensor(ps_value, dtype = tf.float32) # convert as float32 because keras uses float32
+                critic_loss = tf.reduce_mean((adventage ** 2) / 2) # Huber loss
+                # critic_loss = tf.reduce_mean(adventage ** 2) # MSE
 
                 # actor loss
-                action_one_hot = np.zeros((rec_len, self.action_size), dtype = np.float32)
-                tf.one_hot(rec_a, self.action_size, dtype=tf.float32)
-                log_policy = tf.math.log(action_one_hot * cs_policy + 1e-20)
-                entropy = tf.reduce_sum(cs_policy * tf.math.log(cs_policy + 1e-20), axis=1) * 0.01
-                actor_loss = tf.reduce_mean(-adventage * log_policy)
+                action_one_hot = tf.one_hot(rec_a, self.action_size, dtype = tf.float32)
+                entropy = tf.reduce_sum(cs_policy * tf.math.log(cs_policy + 1e-20))
+                actor_loss = tf.reduce_mean(-adventage * tf.math.log(action_one_hot * cs_policy + 1e-20))
 
                 # optimize
-                total_loss = critic_loss + actor_loss + entropy
+                total_loss = critic_loss + actor_loss + entropy * 1e-3
+                # total_loss = critic_loss + actor_loss  # no entropy
                 grads = tape.gradient(total_loss, self.combined.trainable_weights)
                 self.optimizer.apply_gradients(zip(grads, self.combined.trainable_weights))
         
-        if verbose:
-            print("closs: %.3f, aloss: %.3f" % (critic_loss, actor_loss))
+        if verbose and learn_epoch > 0:
+            print("c loss: %.3f\t a loss: %.3f\t entropy: %.3f\t combined loss: %.3f" % (float(critic_loss), float(actor_loss), float(entropy), float(total_loss)))
 
     def save(self, save_weight_name):
         self.actor.save("actor_" + save_weight_name)
